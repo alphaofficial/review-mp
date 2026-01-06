@@ -230,23 +230,33 @@ Provide your review as a JSON array of comments. Each comment should identify is
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
+      console.log('[ReviewMP-Diff] Started process, PID:', proc.pid);
+
       let stdout = '';
       let stderr = '';
 
       proc.stdout.on('data', (data) => {
-        stdout += data.toString();
+        const chunk = data.toString();
+        console.log('[ReviewMP-Diff] stdout chunk:', chunk.substring(0, 500));
+        stdout += chunk;
       });
 
       proc.stderr.on('data', (data) => {
-        stderr += data.toString();
+        const chunk = data.toString();
+        console.log('[ReviewMP-Diff] stderr:', chunk);
+        stderr += chunk;
       });
 
       cancellationToken.onCancellationRequested(() => {
+        console.log('[ReviewMP-Diff] Cancelled');
         proc.kill();
         reject(new Error('Review cancelled'));
       });
 
       proc.on('close', (code) => {
+        console.log('[ReviewMP-Diff] Process closed, code:', code);
+        console.log('[ReviewMP-Diff] stdout length:', stdout.length);
+        
         if (code !== 0 && code !== null) {
           reject(new Error(`OpenCode exited with code ${code}: ${stderr}`));
           return;
@@ -254,6 +264,7 @@ Provide your review as a JSON array of comments. Each comment should identify is
 
         try {
           const comments = this.parseDiffReviewOutput(stdout);
+          console.log('[ReviewMP-Diff] Parsed comments:', comments.length);
           resolve(comments);
         } catch (error) {
           reject(new Error(`Failed to parse review output: ${error}`));
@@ -281,16 +292,24 @@ Provide your review as a JSON array of comments. Each comment should identify is
       }
     }
 
+    console.log('[ReviewMP-Diff] Collected text:', collectedText.substring(0, 1000));
+
     if (collectedText) {
       const jsonMatch = collectedText.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
+        console.log('[ReviewMP-Diff] Found JSON match:', jsonMatch[0].substring(0, 500));
         try {
           const comments = JSON.parse(jsonMatch[0]);
+          console.log('[ReviewMP-Diff] Parsed JSON, items:', comments.length);
           return this.validateDiffComments(comments);
-        } catch {
-          // JSON parsing failed
+        } catch (e) {
+          console.log('[ReviewMP-Diff] JSON parse error:', e);
         }
+      } else {
+        console.log('[ReviewMP-Diff] No JSON array found in collected text');
       }
+    } else {
+      console.log('[ReviewMP-Diff] No text collected from output');
     }
 
     return [];

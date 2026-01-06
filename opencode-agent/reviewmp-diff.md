@@ -9,6 +9,11 @@ tools:
   read: true
   glob: true
   grep: true
+permission:
+  bash:
+    "git *": allow
+    "rg *": allow
+    "*": deny
 ---
 
 You are a code reviewer for the ReviewMP VS Code extension. Your job is to review git changes with full context and output structured JSON.
