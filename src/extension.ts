@@ -89,6 +89,13 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  const reviewBranchCommand = vscode.commands.registerCommand(
+    'reviewmp.reviewBranch',
+    async () => {
+      await reviewGitChanges('branch');
+    }
+  );
+
   const clearCommentsCommand = vscode.commands.registerCommand(
     'reviewmp.clearComments',
     () => {
@@ -103,6 +110,7 @@ export function activate(context: vscode.ExtensionContext) {
     reviewStagedCommand,
     reviewUncommittedCommand,
     reviewLastCommitCommand,
+    reviewBranchCommand,
     clearCommentsCommand,
     commentController
   );
@@ -156,11 +164,12 @@ async function reviewCode(
   );
 }
 
-async function reviewGitChanges(type: 'staged' | 'uncommitted' | 'lastCommit') {
+async function reviewGitChanges(type: 'staged' | 'uncommitted' | 'lastCommit' | 'branch') {
   const labels: Record<string, string> = {
     staged: 'staged changes',
     uncommitted: 'uncommitted changes',
     lastCommit: 'last commit',
+    branch: 'branch changes',
   };
 
   await vscode.window.withProgress(

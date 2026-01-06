@@ -90,6 +90,7 @@ Press F5 in VS Code to launch Extension Development Host.
 | `ReviewMP: Review Staged Changes` | Review git staged changes (`git diff --cached`) |
 | `ReviewMP: Review Uncommitted Changes` | Review all uncommitted changes (`git diff`) |
 | `ReviewMP: Review Last Commit` | Review the last commit (`git diff HEAD~1`) |
+| `ReviewMP: Review Branch Changes` | Review all commits on current branch vs base (`git diff main...HEAD`) |
 | `ReviewMP: Clear All Comments` | Remove all review comments |
 
 ## Configuration

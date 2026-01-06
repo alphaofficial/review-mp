@@ -201,17 +201,126 @@ Provide your review as a JSON array of comments. Each comment should identify is
     return undefined;
   }
 
-  async reviewDiff(
-    type: 'staged' | 'uncommitted' | 'lastCommit',
+  private async detectBaseBranch(
     cancellationToken: vscode.CancellationToken
-  ): Promise<DiffReviewComment[]> {
-    const prompts: Record<string, string> = {
-      staged: 'Review the staged changes using `git diff --cached`. Analyze the changes and provide your review as a JSON array.',
-      uncommitted: 'Review the uncommitted changes using `git diff`. Analyze the changes and provide your review as a JSON array.',
-      lastCommit: 'Review the last commit using `git diff HEAD~1 HEAD`. Analyze the changes and provide your review as a JSON array.',
+  ): Promise<string> {
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+    const execGit = (args: string[]): Promise<string> => {
+      return new Promise((resolve, reject) => {
+        const proc = spawn('git', args, {
+          cwd,
+          env: process.env,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+
+        let stdout = '';
+        let stderr = '';
+
+        proc.stdout.on('data', (data) => {
+          stdout += data.toString();
+        });
+
+        proc.stderr.on('data', (data) => {
+          stderr += data.toString();
+        });
+
+        cancellationToken.onCancellationRequested(() => {
+          proc.kill();
+          reject(new Error('Cancelled'));
+        });
+
+        proc.on('close', (code) => {
+          if (code === 0) {
+            resolve(stdout.trim());
+          } else {
+            reject(new Error(stderr || `git exited with code ${code}`));
+          }
+        });
+
+        proc.on('error', (error) => {
+          reject(error);
+        });
+      });
     };
 
-    const prompt = prompts[type];
+    if (cancellationToken.isCancellationRequested) {
+      throw new Error('Cancelled');
+    }
+
+    // Check if 'main' exists (local or remote)
+    try {
+      await execGit(['rev-parse', '--verify', 'main']);
+      return 'main';
+    } catch {
+      // main doesn't exist locally
+    }
+
+    try {
+      await execGit(['rev-parse', '--verify', 'origin/main']);
+      return 'origin/main';
+    } catch {
+      // origin/main doesn't exist
+    }
+
+    // Check if 'master' exists (local or remote)
+    try {
+      await execGit(['rev-parse', '--verify', 'master']);
+      return 'master';
+    } catch {
+      // master doesn't exist locally
+    }
+
+    try {
+      await execGit(['rev-parse', '--verify', 'origin/master']);
+      return 'origin/master';
+    } catch {
+      // origin/master doesn't exist
+    }
+
+    // Try to get default branch from local ref (no network access)
+    try {
+      const symbolicRef = await execGit(['symbolic-ref', 'refs/remotes/origin/HEAD']);
+      // Returns something like "refs/remotes/origin/main"
+      const match = symbolicRef.match(/refs\/remotes\/origin\/(.+)/);
+      if (match) {
+        return `origin/${match[1]}`;
+      }
+    } catch {
+      // symbolic-ref failed (origin/HEAD not set)
+    }
+
+    if (cancellationToken.isCancellationRequested) {
+      throw new Error('Cancelled');
+    }
+
+    // Fallback: ask the user
+    const userInput = await vscode.window.showInputBox({
+      prompt: 'Could not detect base branch. Please enter the base branch name:',
+      placeHolder: 'main',
+      value: 'main',
+    });
+
+    return userInput || 'main';
+  }
+
+  async reviewDiff(
+    type: 'staged' | 'uncommitted' | 'lastCommit' | 'branch',
+    cancellationToken: vscode.CancellationToken
+  ): Promise<DiffReviewComment[]> {
+    let prompt: string;
+
+    if (type === 'branch') {
+      const baseBranch = await this.detectBaseBranch(cancellationToken);
+      prompt = `Review all changes on the current branch compared to ${baseBranch} using \`git diff ${baseBranch}...HEAD\`. Analyze the changes and provide your review as a JSON array.`;
+    } else {
+      const prompts: Record<string, string> = {
+        staged: 'Review the staged changes using `git diff --cached`. Analyze the changes and provide your review as a JSON array.',
+        uncommitted: 'Review the uncommitted changes using `git diff`. Analyze the changes and provide your review as a JSON array.',
+        lastCommit: 'Review the last commit using `git diff HEAD~1 HEAD`. Analyze the changes and provide your review as a JSON array.',
+      };
+      prompt = prompts[type];
+    }
 
     return new Promise((resolve, reject) => {
       const opencodePath = this.getOpenCodePath();

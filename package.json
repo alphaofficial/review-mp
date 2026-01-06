@@ -17,6 +17,7 @@
     "onCommand:reviewmp.reviewStaged",
     "onCommand:reviewmp.reviewUncommitted",
     "onCommand:reviewmp.reviewLastCommit",
+    "onCommand:reviewmp.reviewBranch",
     "onCommand:reviewmp.clearComments"
   ],
   "main": "./out/extension.js",
@@ -41,6 +42,10 @@
       {
         "command": "reviewmp.reviewLastCommit",
         "title": "ReviewMP: Review Last Commit"
+      },
+      {
+        "command": "reviewmp.reviewBranch",
+        "title": "ReviewMP: Review Branch Changes"
       },
       {
         "command": "reviewmp.clearComments",
