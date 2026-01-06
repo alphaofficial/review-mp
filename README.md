@@ -47,17 +47,31 @@ npm run compile
 
 ### 3. Install in VS Code
 
-Option A: Development mode
-```bash
-# Press F5 in VS Code to launch Extension Development Host
-```
+**Option A: Development mode**
 
-Option B: Package and install
-```bash
-npm install -g @vscode/vsce
-vsce package
-code --install-extension reviewmp-0.0.1.vsix
-```
+Press F5 in VS Code to launch Extension Development Host.
+
+**Option B: Package and install locally**
+
+1. Build the extension:
+   ```bash
+   npm run compile
+   ```
+
+2. Package as VSIX:
+   ```bash
+   npx @vscode/vsce package
+   ```
+   This creates `reviewmp-0.0.1.vsix`
+
+3. Install in VS Code:
+   ```bash
+   code --install-extension reviewmp-0.0.1.vsix
+   ```
+
+4. Reload VS Code:
+   - Open Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
+   - Run "Developer: Reload Window"
 
 ## Usage
 
@@ -90,7 +104,7 @@ Example `settings.json`:
 ```json
 {
   "reviewmp.opencodePath": "/opt/homebrew/bin/opencode",
-  "reviewmp.model": "anthropic/claude-sonnet-4-20250514",
+  "reviewmp.model": "github-copilot/gpt-4o",
   "reviewmp.autoReviewOnStage": true,
   "reviewmp.autoReviewOnCommit": false
 }
@@ -101,9 +115,27 @@ Example `settings.json`:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `reviewmp.opencodePath` | `opencode` | Path to OpenCode CLI |
-| `reviewmp.model` | (empty) | Model to use (e.g., `anthropic/claude-sonnet-4-20250514`) |
+| `reviewmp.model` | (empty) | Model in `provider/model` format (see below) |
 | `reviewmp.autoReviewOnStage` | `false` | Automatically review when files are staged (`git add`) |
 | `reviewmp.autoReviewOnCommit` | `false` | Prompt to review before commit |
+
+### Model Configuration
+
+The model setting uses the format `provider/model`. To see all available models, run:
+
+```bash
+opencode models
+```
+
+**Common examples:**
+
+| Provider | Model ID | Notes |
+|----------|----------|-------|
+| GitHub Copilot | `github-copilot/gpt-4o` | Fast, good for auto-review |
+| GitHub Copilot | `github-copilot/claude-sonnet-4` | Good balance |
+| GitHub Copilot | `github-copilot/gpt-5-mini` | Fast alternative |
+| Anthropic | `anthropic/claude-sonnet-4-20250514` | Direct API |
+| OpenAI | `openai/gpt-4o` | Direct API |
 
 ### Auto-Review Features
 
