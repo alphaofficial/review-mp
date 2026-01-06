@@ -1,0 +1,102 @@
+{
+  "name": "reviewmp",
+  "displayName": "ReviewMP - AI Code Review",
+  "description": "AI-powered code review with inline comments using OpenCode CLI",
+  "version": "0.0.1",
+  "publisher": "reviewmp",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:reviewmp.reviewFile",
+    "onCommand:reviewmp.reviewSelection",
+    "onCommand:reviewmp.reviewStaged",
+    "onCommand:reviewmp.reviewUncommitted",
+    "onCommand:reviewmp.reviewLastCommit"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "reviewmp.reviewFile",
+        "title": "ReviewMP: Review Current File"
+      },
+      {
+        "command": "reviewmp.reviewSelection",
+        "title": "ReviewMP: Review Selection"
+      },
+      {
+        "command": "reviewmp.reviewStaged",
+        "title": "ReviewMP: Review Staged Changes"
+      },
+      {
+        "command": "reviewmp.reviewUncommitted",
+        "title": "ReviewMP: Review Uncommitted Changes"
+      },
+      {
+        "command": "reviewmp.reviewLastCommit",
+        "title": "ReviewMP: Review Last Commit"
+      },
+      {
+        "command": "reviewmp.clearComments",
+        "title": "ReviewMP: Clear All Comments"
+      },
+      {
+        "command": "reviewmp.acceptFix",
+        "title": "Accept Fix",
+        "icon": "$(check)"
+      },
+      {
+        "command": "reviewmp.rejectComment",
+        "title": "Reject",
+        "icon": "$(x)"
+      }
+    ],
+    "menus": {
+      "comments/comment/title": [
+        {
+          "command": "reviewmp.acceptFix",
+          "group": "inline@1",
+          "when": "commentController == reviewmp && comment =~ /with-fix/"
+        },
+        {
+          "command": "reviewmp.rejectComment",
+          "group": "inline@2",
+          "when": "commentController == reviewmp"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "ReviewMP",
+      "properties": {
+        "reviewmp.opencodePath": {
+          "type": "string",
+          "default": "opencode",
+          "description": "Path to the OpenCode CLI executable"
+        },
+        "reviewmp.model": {
+          "type": "string",
+          "default": "",
+          "description": "Model to use for reviews (e.g., anthropic/claude-sonnet-4-20250514). Leave empty for default."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "eslint": "^8.54.0",
+    "typescript": "^5.3.0"
+  }
+}
