@@ -1,15 +1,35 @@
 import * as vscode from 'vscode';
 import { ReviewCommentController } from './comments';
 import { OpenCodeService, DiffReviewComment } from './opencode';
+import { GitWatcher } from './gitWatcher';
 
 let commentController: ReviewCommentController;
 let opencodeService: OpenCodeService;
+let gitWatcher: GitWatcher | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('ReviewMP is now active');
 
   opencodeService = new OpenCodeService();
   commentController = new ReviewCommentController(context, opencodeService);
+
+  // Only initialize git watcher if auto-review settings are enabled
+  const config = vscode.workspace.getConfiguration('reviewmp');
+  const autoReviewOnStage = config.get<boolean>('autoReviewOnStage', false);
+  const autoReviewOnCommit = config.get<boolean>('autoReviewOnCommit', false);
+
+  if (autoReviewOnStage || autoReviewOnCommit) {
+    gitWatcher = new GitWatcher(
+      async () => {
+        await reviewGitChanges('staged');
+      },
+      async () => {
+        await reviewGitChanges('staged');
+        return true;
+      }
+    );
+    context.subscriptions.push(gitWatcher);
+  }
 
   const reviewFileCommand = vscode.commands.registerCommand(
     'reviewmp.reviewFile',
@@ -229,5 +249,8 @@ async function addDiffComments(comments: DiffReviewComment[]) {
 export function deactivate() {
   if (commentController) {
     commentController.dispose();
+  }
+  if (gitWatcher) {
+    gitWatcher.dispose();
   }
 }

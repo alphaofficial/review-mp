@@ -11,11 +11,13 @@
     "Other"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onCommand:reviewmp.reviewFile",
     "onCommand:reviewmp.reviewSelection",
     "onCommand:reviewmp.reviewStaged",
     "onCommand:reviewmp.reviewUncommitted",
-    "onCommand:reviewmp.reviewLastCommit"
+    "onCommand:reviewmp.reviewLastCommit",
+    "onCommand:reviewmp.clearComments"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -81,6 +83,16 @@
           "type": "string",
           "default": "",
           "description": "Model to use for reviews (e.g., anthropic/claude-sonnet-4-20250514). Leave empty for default."
+        },
+        "reviewmp.autoReviewOnStage": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically run review when files are staged (git add)"
+        },
+        "reviewmp.autoReviewOnCommit": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically run review before commit (requires pre-commit hook setup)"
         }
       }
     }
