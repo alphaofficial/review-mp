@@ -439,7 +439,11 @@ Provide your review as a JSON array of comments. Each comment should identify is
 ${formattedDiff}
 </diff>
 
-When reporting issues, use the line numbers shown in the diff (the numbers before each line of code). Analyze the changes and provide your review as a JSON array.`;
+When reporting issues:
+1. Use the line numbers shown in the diff (the numbers before each line of code)
+2. Include the file path for each issue (from the diff header like "diff --git a/path/to/file.ts b/path/to/file.ts")
+3. Provide your review as a JSON array with required fields: file, line, message, severity`;
+
 
     return new Promise((resolve, reject) => {
       const opencodePath = this.getOpenCodePath();

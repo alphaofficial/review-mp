@@ -67,13 +67,15 @@ Output your review as a JSON array.
 You MUST output ONLY a valid JSON array at the end. No other text after the JSON.
 
 Each comment in the array must have:
-- `file`: The file path where the issue is located (required)
+- `file`: The file path where the issue is located (required for ALL reviews)
 - `line`: The 1-based line number where the issue is (use the line numbers shown in the code prefix)
 - `message`: A clear, concise description of the issue with context on WHY it's a problem
 - `fix`: (optional) The suggested replacement code
 - `severity`: One of "error", "warning", "info", or "suggestion"
 
 IMPORTANT: When code is provided with line number prefixes (e.g., "1: const x = 5;"), use those exact line numbers in your JSON output. Do NOT recalculate or adjust line numbers.
+
+CRITICAL: Always include the `file` field. For diff reviews, use the relative file path from the repository root (e.g., "islands/cs/frontend/lib/api/search.ts").
 
 ## Example Output
 
