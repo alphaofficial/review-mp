@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import { ReviewCommentController } from './comments';
-import { OpenCodeService, DiffReviewComment } from './opencode';
+import { ReviewCommentController, ReviewComment } from './comments';
+import { OpenCodeService } from './opencode';
 import { GitWatcher } from './gitWatcher';
 
 let commentController: ReviewCommentController;
@@ -205,14 +205,14 @@ async function reviewGitChanges(type: 'staged' | 'uncommitted' | 'lastCommit' | 
   );
 }
 
-async function addDiffComments(comments: DiffReviewComment[]) {
+async function addDiffComments(comments: ReviewComment[]) {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   if (!workspaceFolder) {
     return;
   }
 
   // Group comments by file
-  const commentsByFile = new Map<string, DiffReviewComment[]>();
+  const commentsByFile = new Map<string, ReviewComment[]>();
   for (const comment of comments) {
     const existing = commentsByFile.get(comment.file) || [];
     existing.push(comment);
@@ -244,14 +244,7 @@ async function addDiffComments(comments: DiffReviewComment[]) {
     };
     const languageId = languageMap[ext] || ext;
 
-    const reviewComments = fileComments.map(c => ({
-      line: c.line,
-      message: c.message,
-      fix: c.fix,
-      severity: c.severity,
-    }));
-
-    commentController.addComments(uri, reviewComments, languageId);
+    commentController.addComments(uri, fileComments, languageId);
   }
 }
 

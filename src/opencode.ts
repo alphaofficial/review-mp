@@ -2,9 +2,7 @@ import * as vscode from 'vscode';
 import { spawn } from 'child_process';
 import { ReviewComment } from './comments';
 
-export interface DiffReviewComment extends ReviewComment {
-  file: string;
-}
+
 
 export class OpenCodeService {
   private getOpenCodePath(): string {
@@ -92,7 +90,7 @@ export class OpenCodeService {
         }
 
         try {
-          const comments = this.parseReviewOutput(stdout);
+          const comments = this.parseReviewOutput(stdout, filePath);
           console.log('[ReviewMP] Parsed comments:', comments.length);
           resolve(comments);
         } catch (error) {
@@ -108,16 +106,24 @@ export class OpenCodeService {
   }
 
   private buildReviewPrompt(code: string, languageId: string, filePath: string): string {
+    // Add line numbers to each line of code for unambiguous line tracking
+    const lines = code.split('\n');
+    const numberedCode = lines
+      .map((line, index) => `${index + 1}: ${line}`)
+      .join('\n');
+
     return `Review the following ${languageId} code from file "${filePath}".
 
 <code>
-${code}
+${numberedCode}
 </code>
+
+The code is prefixed with line numbers (1-based). When reporting issues, use the line numbers shown in the code.
 
 Provide your review as a JSON array of comments. Each comment should identify issues, suggest improvements, or highlight potential bugs.`;
   }
 
-  private parseReviewOutput(output: string): ReviewComment[] {
+  private parseReviewOutput(output: string, filePath: string): ReviewComment[] {
     // OpenCode with --format json outputs newline-delimited JSON events
     // Each line is a JSON object with structure like:
     // { "type": "text", "part": { "text": "..." } }
@@ -144,7 +150,7 @@ Provide your review as a JSON array of comments. Each comment should identify is
       if (jsonMatch) {
         try {
           const comments = JSON.parse(jsonMatch[0]);
-          return this.validateComments(comments);
+          return this.validateComments(comments, filePath);
         } catch {
           // JSON parsing failed
         }
@@ -156,7 +162,7 @@ Provide your review as a JSON array of comments. Each comment should identify is
     if (jsonMatch) {
       try {
         const comments = JSON.parse(jsonMatch[0]);
-        return this.validateComments(comments);
+        return this.validateComments(comments, filePath);
       } catch {
         // Parsing failed
       }
@@ -165,7 +171,7 @@ Provide your review as a JSON array of comments. Each comment should identify is
     return [];
   }
 
-  private validateComments(data: unknown): ReviewComment[] {
+  private validateComments(data: unknown, filePath: string): ReviewComment[] {
     if (!Array.isArray(data)) {
       return [];
     }
@@ -180,6 +186,7 @@ Provide your review as a JSON array of comments. Each comment should identify is
         );
       })
       .map((item) => ({
+        file: filePath,
         line: (item.line as number) - 1, // Convert to 0-based line numbers
         message: item.message as string,
         fix: typeof item.fix === 'string' ? item.fix : undefined,
@@ -199,6 +206,103 @@ Provide your review as a JSON array of comments. Each comment should identify is
       return severity;
     }
     return undefined;
+  }
+
+  private async executeDiffCommand(
+    diffCommand: string,
+    cancellationToken: vscode.CancellationToken
+  ): Promise<string> {
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+    return new Promise((resolve, reject) => {
+      const proc = spawn('bash', ['-c', diffCommand], {
+        cwd,
+        env: process.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      proc.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      proc.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      cancellationToken.onCancellationRequested(() => {
+        proc.kill();
+        reject(new Error('Cancelled'));
+      });
+
+      proc.on('close', (code) => {
+        if (code !== 0 && code !== null) {
+          reject(new Error(`git exited with code ${code}: ${stderr}`));
+        } else {
+          resolve(stdout);
+        }
+      });
+
+      proc.on('error', (error) => {
+        reject(error);
+      });
+    });
+  }
+
+  private formatDiffWithLineNumbers(diffOutput: string): string {
+    const lines = diffOutput.split('\n');
+    const formattedLines: string[] = [];
+    let currentLineNum = 0;
+    let inHunk = false;
+
+    for (const line of lines) {
+      // File header
+      if (line.startsWith('diff --git')) {
+        formattedLines.push(line);
+        continue;
+      }
+
+      if (line.startsWith('---') || line.startsWith('+++')) {
+        formattedLines.push(line);
+        continue;
+      }
+
+      // Hunk header - extract starting line number
+      if (line.startsWith('@@')) {
+        formattedLines.push(line);
+        inHunk = true;
+        // Parse line number from hunk header: @@ -10,5 +15,7 @@
+        const match = line.match(/\+(\d+)/);
+        if (match) {
+          currentLineNum = parseInt(match[1], 10) - 1;
+        }
+        continue;
+      }
+
+      if (!inHunk) {
+        formattedLines.push(line);
+        continue;
+      }
+
+      // In a hunk - only include added lines, skip context and removed lines
+      if (line.startsWith('+') && !line.startsWith('+++')) {
+        // Added line - include with line number
+        currentLineNum++;
+        formattedLines.push(`${currentLineNum}: ${line.substring(1)}`);
+      } else if (line.startsWith('-') && !line.startsWith('---')) {
+        // Removed line - skip it completely (being deleted)
+        // Don't increment counter since this line is removed
+      } else if (line.startsWith(' ')) {
+        // Context line - skip it, just increment counter
+        currentLineNum++;
+      } else {
+        formattedLines.push(line);
+      }
+    }
+
+    return formattedLines.join('\n');
   }
 
   private async detectBaseBranch(
@@ -307,27 +411,42 @@ Provide your review as a JSON array of comments. Each comment should identify is
   async reviewDiff(
     type: 'staged' | 'uncommitted' | 'lastCommit' | 'branch',
     cancellationToken: vscode.CancellationToken
-  ): Promise<DiffReviewComment[]> {
-    let prompt: string;
+  ): Promise<ReviewComment[]> {
+    let diffCommand: string;
 
     if (type === 'branch') {
       const baseBranch = await this.detectBaseBranch(cancellationToken);
-      prompt = `Review all changes on the current branch compared to ${baseBranch} using \`git diff ${baseBranch}...HEAD\`. Analyze the changes and provide your review as a JSON array.`;
+      diffCommand = `git diff ${baseBranch}...HEAD`;
     } else {
-      const prompts: Record<string, string> = {
-        staged: 'Review the staged changes using `git diff --cached`. Analyze the changes and provide your review as a JSON array.',
-        uncommitted: 'Review the uncommitted changes using `git diff`. Analyze the changes and provide your review as a JSON array.',
-        lastCommit: 'Review the last commit using `git diff HEAD~1 HEAD`. Analyze the changes and provide your review as a JSON array.',
+      const commands: Record<string, string> = {
+        staged: 'git diff --cached',
+        uncommitted: 'git diff',
+        lastCommit: 'git diff HEAD~1 HEAD',
       };
-      prompt = prompts[type];
+      diffCommand = commands[type];
     }
+
+    // Get the diff output
+    const diffOutput = await this.executeDiffCommand(diffCommand, cancellationToken);
+    
+    // Format diff with line numbers
+    const formattedDiff = this.formatDiffWithLineNumbers(diffOutput);
+
+    // Build prompt with formatted diff
+    const prompt = `Review the following git changes. The diff is formatted with line numbers for accurate reference:
+
+<diff>
+${formattedDiff}
+</diff>
+
+When reporting issues, use the line numbers shown in the diff (the numbers before each line of code). Analyze the changes and provide your review as a JSON array.`;
 
     return new Promise((resolve, reject) => {
       const opencodePath = this.getOpenCodePath();
       const model = this.getModel();
       const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
-      const args = ['run', '--agent', 'reviewmp-diff', '--format', 'json'];
+      const args = ['run', '--agent', 'reviewmp', '--format', 'json'];
       if (model) {
         args.push('--model', model);
       }
@@ -386,7 +505,7 @@ Provide your review as a JSON array of comments. Each comment should identify is
     });
   }
 
-  private parseDiffReviewOutput(output: string): DiffReviewComment[] {
+  private parseDiffReviewOutput(output: string): ReviewComment[] {
     const lines = output.trim().split('\n');
     let collectedText = '';
     
@@ -424,7 +543,7 @@ Provide your review as a JSON array of comments. Each comment should identify is
     return [];
   }
 
-  private validateDiffComments(data: unknown): DiffReviewComment[] {
+  private validateDiffComments(data: unknown): ReviewComment[] {
     if (!Array.isArray(data)) {
       return [];
     }
@@ -440,9 +559,9 @@ Provide your review as a JSON array of comments. Each comment should identify is
         );
       })
       .map((item) => ({
+        file: item.file as string,
         line: (item.line as number) - 1,
         message: item.message as string,
-        file: item.file as string,
         fix: typeof item.fix === 'string' ? item.fix : undefined,
         severity: this.validateSeverity(item.severity),
       }));

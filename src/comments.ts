@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { OpenCodeService } from './opencode';
 
 export interface ReviewComment {
+  file: string;
   line: number;
   message: string;
   fix?: string;
