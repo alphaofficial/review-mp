@@ -25,7 +25,6 @@ dist/
 Thumbs.db
 
 # IDE
-.vscode/
 .idea/
 
 # Test coverage
