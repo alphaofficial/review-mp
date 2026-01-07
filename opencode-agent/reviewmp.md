@@ -55,6 +55,10 @@ Now review the code considering:
 - Are there edge cases other similar code handles?
 - Do the types match what callers expect?
 - Is error handling consistent with the rest of the codebase?
+- Does it introduce performance issues?
+- Does it introduce security issues?
+- Can logic be improved or optimised better?
+- Is it readable and maintainable by the codebase standards and patterns?
 - For diffs: Does this change align with the apparent intent from commit messages?
 - For diffs: Are there breaking changes to existing callers?
 
