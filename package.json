@@ -11,14 +11,7 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished",
-    "onCommand:reviewmp.reviewFile",
-    "onCommand:reviewmp.reviewSelection",
-    "onCommand:reviewmp.reviewStaged",
-    "onCommand:reviewmp.reviewUncommitted",
-    "onCommand:reviewmp.reviewLastCommit",
-    "onCommand:reviewmp.reviewBranch",
-    "onCommand:reviewmp.clearComments"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {

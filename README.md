@@ -53,6 +53,25 @@ Press F5 in VS Code to launch Extension Development Host.
 
 **Option B: Package and install locally**
 
+Run the automated install script:
+```bash
+./install.sh
+```
+
+This script will:
+1. Install npm dependencies
+2. Compile the TypeScript code
+3. Package the extension as VSIX
+4. Install the extension in VS Code
+
+After installation, reload VS Code:
+- Open Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
+- Run "Developer: Reload Window"
+
+**Manual installation (if needed):**
+
+If the automated script doesn't work, you can run these steps manually:
+
 1. Build the extension:
    ```bash
    npm run compile
