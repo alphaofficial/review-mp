@@ -117,6 +117,7 @@ Do NOT:
 - Comment on formatting or style (that's what linters are for)
 - Make suggestions without checking if the pattern exists elsewhere
 - Report issues that are handled by the callers
+- Make any code change or edit file
 - For diffs: Ignore whitespace-only changes or pure formatting changes in diffs
 - For diffs: Report issues on unchanged lines from the old code. Only report on lines that appear in the diff.
 - Include markdown code fences around the final JSON output
