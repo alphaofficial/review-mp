@@ -4,6 +4,10 @@
   "description": "AI-powered code review with inline comments using OpenCode CLI",
   "version": "0.0.1",
   "publisher": "reviewmp",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alphaofficial/review-mp.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
