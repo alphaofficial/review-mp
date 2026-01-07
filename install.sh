@@ -36,9 +36,17 @@ echo ""
 echo "Step 3: Packaging extension as VSIX..."
 npx @vscode/vsce package
 
-# Step 4: Install in VS Code
+# Step 4: Copy agent to opencode config location
 echo ""
-echo "Step 4: Installing extension in VS Code..."
+echo "Step 4: Installing reviewmp agent to opencode config..."
+OPENCODE_AGENTS_DIR="$HOME/.config/opencode/agents"
+mkdir -p "$OPENCODE_AGENTS_DIR"
+cp opencode-agent/reviewmp.md "$OPENCODE_AGENTS_DIR/"
+echo "Agent installed to $OPENCODE_AGENTS_DIR/reviewmp.md"
+
+# Step 5: Install in VS Code
+echo ""
+echo "Step 5: Installing extension in VS Code..."
 if command -v code &> /dev/null; then
     code --install-extension reviewmp-0.0.1.vsix
     echo ""
