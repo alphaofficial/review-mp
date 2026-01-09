@@ -39,7 +39,7 @@ npx @vscode/vsce package
 # Step 4: Copy agent to opencode config location
 echo ""
 echo "Step 4: Installing reviewmp agent to opencode config..."
-OPENCODE_AGENTS_DIR="$HOME/.config/opencode/agents"
+OPENCODE_AGENTS_DIR="$HOME/.config/opencode/agent"
 mkdir -p "$OPENCODE_AGENTS_DIR"
 cp opencode-agent/reviewmp.md "$OPENCODE_AGENTS_DIR/"
 echo "Agent installed to $OPENCODE_AGENTS_DIR/reviewmp.md"
