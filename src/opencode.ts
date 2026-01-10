@@ -120,7 +120,7 @@ ${numberedCode}
 
 The code is prefixed with line numbers (1-based). When reporting issues, use the line numbers shown in the code.
 
-Provide your review as a JSON array of comments. Understand the entire code before reviewing. Each comment should identify issues, suggest improvements, or highlight potential bugs. Ensure comments makes sense in the context of the full code provided.`;
+Provide your review as a JSON array of comments. Understand the entire code before reviewing. Each comment should identify issues, suggest improvements, or highlight potential bugs.`;
   }
 
   private parseReviewOutput(output: string, filePath: string): ReviewComment[] {
@@ -443,8 +443,7 @@ When reporting issues:
 1. Use the line numbers shown in the diff (the numbers before each line of code)
 2. Include the file path for each issue (from the diff header like "diff --git a/path/to/file.ts b/path/to/file.ts")
 3. Provide your review as a JSON array with required fields: file, line, message, severity
-4. Understand the changes before reviewing
-5. Ensure comments make sense in the context of the diff provided.`;
+4. Ensure you understand the changes before reviewing`;
 
 
     return new Promise((resolve, reject) => {
