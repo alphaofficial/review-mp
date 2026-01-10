@@ -5,6 +5,11 @@ set -e
 echo "ReviewMP Installation Script"
 echo "====================================================================="
 
+# Step 0: Pull latest changes from git
+echo "Step 0: Pulling latest changes from git..."
+git pull origin main || echo "Warning: Could not pull from git"
+echo ""
+
 # Check if Node.js is installed
 if ! command -v node &> /dev/null; then
     echo "Error: Node.js is not installed. Please install Node.js 18+ first."
