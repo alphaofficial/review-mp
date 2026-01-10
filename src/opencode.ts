@@ -83,7 +83,7 @@ export class OpenCodeService {
       proc.on('close', (code, signal) => {
         console.log('[ReviewMP] Process closed - code:', code, 'signal:', signal);
         console.log('[ReviewMP] stdout length:', stdout.length);
-        
+
         if (code !== 0 && code !== null) {
           reject(new Error(`OpenCode exited with code ${code}: ${stderr}`));
           return;
@@ -120,7 +120,7 @@ ${numberedCode}
 
 The code is prefixed with line numbers (1-based). When reporting issues, use the line numbers shown in the code.
 
-Provide your review as a JSON array of comments. Each comment should identify issues, suggest improvements, or highlight potential bugs.`;
+Provide your review as a JSON array of comments. Understand the entire code before reviewing. Each comment should identify issues, suggest improvements, or highlight potential bugs. Ensure comments makes sense in the context of the full code provided.`;
   }
 
   private parseReviewOutput(output: string, filePath: string): ReviewComment[] {
@@ -129,11 +129,11 @@ Provide your review as a JSON array of comments. Each comment should identify is
     // { "type": "text", "part": { "text": "..." } }
     const lines = output.trim().split('\n');
     let collectedText = '';
-    
+
     for (const line of lines) {
       try {
         const event = JSON.parse(line);
-        
+
         // Look for text events - the actual content is in part.text
         if (event.type === 'text' && event.part?.text) {
           collectedText += event.part.text;
@@ -428,7 +428,7 @@ Provide your review as a JSON array of comments. Each comment should identify is
 
     // Get the diff output
     const diffOutput = await this.executeDiffCommand(diffCommand, cancellationToken);
-    
+
     // Format diff with line numbers
     const formattedDiff = this.formatDiffWithLineNumbers(diffOutput);
 
@@ -442,7 +442,9 @@ ${formattedDiff}
 When reporting issues:
 1. Use the line numbers shown in the diff (the numbers before each line of code)
 2. Include the file path for each issue (from the diff header like "diff --git a/path/to/file.ts b/path/to/file.ts")
-3. Provide your review as a JSON array with required fields: file, line, message, severity`;
+3. Provide your review as a JSON array with required fields: file, line, message, severity
+4. Understand the changes before reviewing
+5. Ensure comments make sense in the context of the diff provided.`;
 
 
     return new Promise((resolve, reject) => {
@@ -488,7 +490,7 @@ When reporting issues:
       proc.on('close', (code) => {
         console.log('[ReviewMP-Diff] Process closed, code:', code);
         console.log('[ReviewMP-Diff] stdout length:', stdout.length);
-        
+
         if (code !== 0 && code !== null) {
           reject(new Error(`OpenCode exited with code ${code}: ${stderr}`));
           return;
@@ -512,7 +514,7 @@ When reporting issues:
   private parseDiffReviewOutput(output: string): ReviewComment[] {
     const lines = output.trim().split('\n');
     let collectedText = '';
-    
+
     for (const line of lines) {
       try {
         const event = JSON.parse(line);

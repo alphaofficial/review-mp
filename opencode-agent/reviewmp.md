@@ -38,7 +38,7 @@ Before reviewing, gather context about what you're reviewing:
 4. **Look for patterns** - Check how similar things are done elsewhere in the codebase
 5. **Check tests** - Look for test files that might clarify expected behavior
 6. **Review the entire file** - Understand the entire file and report issues anywhere in the file
-7. **Be thorough and thoughtful** - Ensure the review comment makes sense and it contextual
+7. **Be thorough and thoughtful** - Ensure the review comment makes sense for the file and codebase context.
 
 **For Diff Reviews (staged, uncommitted, lastCommit, branch):**
 1. **Understand the diff format** - The diff is formatted with line numbers (e.g., "15: const x = 5;") for accurate reference
