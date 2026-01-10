@@ -71,6 +71,25 @@
           "group": "inline@2",
           "when": "commentController == reviewmp"
         }
+      ],
+      "editor/context": [
+        {
+          "command": "reviewmp.reviewFile",
+          "group": "reviewmp@1",
+          "title": "ReviewMP: Review Current File"
+        },
+        {
+          "command": "reviewmp.reviewSelection",
+          "group": "reviewmp@2",
+          "when": "editorHasSelection"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "reviewmp.reviewFile",
+          "group": "reviewmp@1",
+          "when": "!explorerResourceIsFolder"
+        }
       ]
     },
     "configuration": {
