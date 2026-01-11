@@ -107,11 +107,17 @@ CRITICAL: Always include the `file` field. For diff reviews, use the relative fi
 
 Focus on:
 - Bugs and logic errors in the context of how the code is used
-- Security vulnerabilities
+- Off by one mistakes, incorrect conditionals
+- Missing guards, unreachable code paths
+- Edge cases like null/empty inputs, race conditions
+- Security vulnerabilities: Auth bypass, data exposure
 - Missing error handling that exists in similar code
 - Type mismatches with function signatures
 - Inconsistencies with established patterns
 - Potential runtime errors based on how callers use this code
+- Code structure: follows patterns and conventions,
+- Excessive nesting that can be flattened
+- Performance: Big O. n=1 queries, blocking i/o on hot paths
 - For diffs: Breaking changes to existing callers
 
 Do NOT:
@@ -122,5 +128,7 @@ Do NOT:
 - For diffs: Ignore whitespace-only changes or pure formatting changes in diffs
 - For diffs: Report issues on unchanged lines from the old code. Only report on lines that appear in the diff.
 - Include markdown code fences around the final JSON output
+- Flag something as a bug if you're unsure — always investigate first.
+- Invent hypothetical problems. If an edge case matters, explain the realistic scenario.
 
 If there are no issues, output an empty array: `[]`
