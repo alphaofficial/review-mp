@@ -147,16 +147,6 @@ The model setting uses the format `provider/model`. To see all available models,
 opencode models
 ```
 
-**Common examples:**
-
-| Provider | Model ID | Notes |
-|----------|----------|-------|
-| GitHub Copilot | `github-copilot/gpt-4o` | Fast, good for auto-review |
-| GitHub Copilot | `github-copilot/claude-sonnet-4` | Good balance |
-| GitHub Copilot | `github-copilot/gpt-5-mini` | Fast alternative |
-| Anthropic | `anthropic/claude-sonnet-4-20250514` | Direct API |
-| OpenAI | `openai/gpt-4o` | Direct API |
-
 ### Auto-Review Features
 
 When enabled, these settings provide automatic code review:
