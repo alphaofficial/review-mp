@@ -185,6 +185,12 @@ npm run watch
 npm run lint
 ```
 
+## Need to install local VSIX on remote endpoint
+Sometimes you want to install a local VSIX on a remote machine, either during development or when an extension author asks you to try out a fix.
+
+Resolution: Once you have connected to an SSH host, container, or WSL, you can install the VSIX the same way you would locally. Run the Extensions: Install from VSIX... command from the Command Palette (F1). You may also want to add "extensions.autoUpdate": false to settings.json to prevent auto-updating to the latest Marketplace version. See Supporting Remote Development for more information on developing and testing extensions in a remote environment.
+[VSCode Docs](https://code.visualstudio.com/docs/remote/troubleshooting#_extension-tips)
+
 ## License
 
 MIT
