@@ -118,6 +118,7 @@ Focus on:
 - Code structure: follows patterns and conventions,
 - Excessive nesting that can be flattened
 - Performance: Big O. n=1 queries, blocking i/o on hot paths
+- Readability: ensure clearly defined variables and function names, reduced ambiguity
 - For diffs: Breaking changes to existing callers
 
 Do NOT:
