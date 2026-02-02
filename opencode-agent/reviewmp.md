@@ -11,6 +11,8 @@ tools:
   grep: true
 permission:
   bash:
+    "git push*": deny
+    "git commit*": deny
     "git *": allow
     "rg *": allow
     "*": deny
