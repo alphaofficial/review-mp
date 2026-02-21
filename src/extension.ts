@@ -323,6 +323,8 @@ async function addPRComments(comments: ReviewComment[], headRef: string, baseRef
     ? gitExtension.exports.getAPI(1)
     : undefined;
 
+  const skippedFiles: string[] = [];
+
   const commentsByFile = new Map<string, ReviewComment[]>();
   for (const comment of comments) {
     const existing = commentsByFile.get(comment.file) || [];
@@ -345,47 +347,57 @@ async function addPRComments(comments: ReviewComment[], headRef: string, baseRef
 
     let commentUri: vscode.Uri = fileUri; // fallback
 
-    if (gitApi) {
-      try {
-        const headUri = gitApi.toGitUri(fileUri, headRef);
-
-        if (newFiles.has(filePath)) {
-          // New file — no base version exists, just open at head ref
-          await vscode.window.showTextDocument(headUri, { preview: false, preserveFocus: true });
-        } else {
-          // Modified file — open as diff view: merge-base vs PR head
-          const baseUri = gitApi.toGitUri(fileUri, baseRef);
-          await vscode.commands.executeCommand(
-            'vscode.diff',
-            baseUri,
-            headUri,
-            `${filePath} (PR Review)`,
-            { preview: false, preserveFocus: true }
-          );
-        }
-
-        commentUri = headUri;
-      } catch {
-        // Git extension failed — fall back to local file
-        console.log(`[ReviewMP-PR] Could not open ${filePath} at ref, falling back to local`);
+    // For modified files that exist locally: open and place comments
+    // For new files or files that don't exist locally: try git show, fall back to skip
+    try {
+      // First try: open the local file (works when on the PR branch or file exists locally)
+      await vscode.window.showTextDocument(fileUri, { preview: false, preserveFocus: true });
+    } catch {
+      // File doesn't exist locally — try opening at the head ref via git extension
+      if (gitApi) {
         try {
-          await vscode.window.showTextDocument(fileUri, { preview: false, preserveFocus: true });
+          const headUri = gitApi.toGitUri(fileUri, headRef);
+          await vscode.window.showTextDocument(headUri, { preview: false, preserveFocus: true });
+          commentUri = headUri;
         } catch {
-          console.log(`[ReviewMP-PR] Could not open ${filePath} locally either, skipping`);
+          console.log(`[ReviewMP-PR] Skipping ${filePath} — not available locally or at ref`);
+          skippedFiles.push(filePath);
           continue;
         }
-      }
-    } else {
-      // No git extension — just open local files
-      console.log('[ReviewMP-PR] Git extension not available, using local files');
-      try {
-        await vscode.window.showTextDocument(fileUri, { preview: false, preserveFocus: true });
-      } catch {
+      } else {
+        console.log(`[ReviewMP-PR] Skipping ${filePath} — not available locally`);
+        skippedFiles.push(filePath);
         continue;
       }
     }
 
     commentController.addComments(commentUri, fileComments, languageId);
+  }
+
+  // Show skipped files' comments in output channel so they're not lost
+  if (skippedFiles.length > 0) {
+    const skippedComments = comments.filter(c => skippedFiles.includes(c.file));
+    if (skippedComments.length > 0) {
+      const channel = vscode.window.createOutputChannel('ReviewMP - PR Review');
+      channel.clear();
+      channel.appendLine(`PR Review — ${skippedFiles.length} file(s) not available locally (checkout the PR branch for inline comments):\n`);
+      for (const file of skippedFiles) {
+        const fileComments = skippedComments.filter(c => c.file === file);
+        channel.appendLine(`── ${file} (${fileComments.length} comments) ──`);
+        for (const c of fileComments) {
+          channel.appendLine(`  L${c.line + 1} [${c.severity || 'review'}]: ${c.message}`);
+          if (c.fix) {
+            channel.appendLine(`    Fix: ${c.fix}`);
+          }
+        }
+        channel.appendLine('');
+      }
+      channel.show(true);
+    }
+
+    vscode.window.showWarningMessage(
+      `${skippedFiles.length} file(s) not available locally — comments shown in Output panel.`
+    );
   }
 }
 
