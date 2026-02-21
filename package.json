@@ -45,6 +45,10 @@
         "title": "ReviewMP: Review Branch Changes"
       },
       {
+        "command": "reviewmp.reviewPR",
+        "title": "ReviewMP: Review Pull Request"
+      },
+      {
         "command": "reviewmp.clearComments",
         "title": "ReviewMP: Clear All Comments"
       },
