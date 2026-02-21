@@ -21,6 +21,8 @@ export interface PRReviewResult {
   reviewRef?: string;
   /** Git ref (commit SHA) of the merge-base between PR base and head. Used for diff views. */
   baseRef?: string;
+  /** Files that are newly added in the PR (don't exist at baseRef). */
+  newFiles?: Set<string>;
 }
 
 export class PRReviewService {
@@ -106,15 +108,16 @@ export class PRReviewService {
       return { comments: [], reviewRef, baseRef };
     }
 
-    // Step 3: Split by file
+    // Step 3: Split by file and detect new files
     const fileChunks = this.splitDiffByFile(diffOutput);
-    console.log(`[ReviewMP-PR] ${fileChunks.length} file(s) changed`);
+    const newFiles = this.detectNewFiles(diffOutput);
+    console.log(`[ReviewMP-PR] ${fileChunks.length} file(s) changed, ${newFiles.size} new`);
 
     // Small PRs: single review (preserves full cross-file context naturally)
     const totalLines = fileChunks.reduce((sum, c) => sum + c.diff.split('\n').length, 0);
     if (fileChunks.length <= 3 && totalLines <= 500) {
       const comments = await this.reviewSingleDiff(diffOutput, prInfo, cancellationToken);
-      return { comments, reviewRef, baseRef };
+      return { comments, reviewRef, baseRef, newFiles };
     }
 
     // Step 4: Build import graph and cluster related files
@@ -164,7 +167,7 @@ export class PRReviewService {
       }
     }
 
-    return { comments: allComments, reviewRef, baseRef };
+    return { comments: allComments, reviewRef, baseRef, newFiles };
   }
 
   // ─── PR Detection ──────────────────────────────────────────────────
@@ -290,6 +293,27 @@ export class PRReviewService {
     }
 
     return chunks;
+  }
+
+  /**
+   * Detect newly added files from the diff output.
+   * New files have "--- /dev/null" in their diff header.
+   */
+  private detectNewFiles(diffOutput: string): Set<string> {
+    const newFiles = new Set<string>();
+    const lines = diffOutput.split('\n');
+    let currentFile = '';
+
+    for (const line of lines) {
+      if (line.startsWith('diff --git')) {
+        const match = line.match(/diff --git a\/.+ b\/(.+)/);
+        currentFile = match ? match[1] : '';
+      } else if (line === '--- /dev/null' && currentFile) {
+        newFiles.add(currentFile);
+      }
+    }
+
+    return newFiles;
   }
 
   // ─── Import Graph & Clustering ─────────────────────────────────────

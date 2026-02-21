@@ -142,7 +142,7 @@ export function activate(context: vscode.ExtensionContext) {
 
             if (result.reviewRef && result.baseRef) {
               // Remote branch — open diff views and place comments on the PR's code
-              await addPRComments(result.comments, result.reviewRef, result.baseRef);
+              await addPRComments(result.comments, result.reviewRef, result.baseRef, result.newFiles || new Set());
             } else {
               // Local branch — place comments on local workspace files
               await addDiffComments(result.comments);
@@ -311,7 +311,7 @@ async function addDiffComments(comments: ReviewComment[]) {
  * Comments attach to the right side (head/new code) of each diff view.
  * Falls back to opening files at a git ref, then to local files.
  */
-async function addPRComments(comments: ReviewComment[], headRef: string, baseRef: string) {
+async function addPRComments(comments: ReviewComment[], headRef: string, baseRef: string, newFiles: Set<string>) {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   if (!workspaceFolder) {
     return;
@@ -347,25 +347,27 @@ async function addPRComments(comments: ReviewComment[], headRef: string, baseRef
 
     if (gitApi) {
       try {
-        // Use git extension to create proper git: URIs
-        const baseUri = gitApi.toGitUri(fileUri, baseRef);
         const headUri = gitApi.toGitUri(fileUri, headRef);
 
-        // Open as diff view: merge-base vs PR head
-        // Shows the PR's actual changes in a side-by-side diff editor
-        // Comments attach to the right (head) side
-        await vscode.commands.executeCommand(
-          'vscode.diff',
-          baseUri,
-          headUri,
-          `${filePath} (PR Review)`,
-          { preview: false, preserveFocus: true }
-        );
+        if (newFiles.has(filePath)) {
+          // New file — no base version exists, just open at head ref
+          await vscode.window.showTextDocument(headUri, { preview: false, preserveFocus: true });
+        } else {
+          // Modified file — open as diff view: merge-base vs PR head
+          const baseUri = gitApi.toGitUri(fileUri, baseRef);
+          await vscode.commands.executeCommand(
+            'vscode.diff',
+            baseUri,
+            headUri,
+            `${filePath} (PR Review)`,
+            { preview: false, preserveFocus: true }
+          );
+        }
 
         commentUri = headUri;
       } catch {
-        // Git extension failed — open the file normally
-        console.log(`[ReviewMP-PR] Could not open diff for ${filePath}, falling back to local`);
+        // Git extension failed — fall back to local file
+        console.log(`[ReviewMP-PR] Could not open ${filePath} at ref, falling back to local`);
         try {
           await vscode.window.showTextDocument(fileUri, { preview: false, preserveFocus: true });
         } catch {
