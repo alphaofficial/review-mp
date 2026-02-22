@@ -129,6 +129,7 @@ export function activate(context: vscode.ExtensionContext) {
         },
         async (progress, token) => {
           try {
+            commentController.clearAllComments();
             const result = await prReviewService.reviewPR(prNumber, token);
 
             if (token.isCancellationRequested) {
