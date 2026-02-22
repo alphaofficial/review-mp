@@ -55,98 +55,142 @@ export class PRReviewService {
       : await this.detectPRFromBranch(cwd, cancellationToken);
 
     // Determine if we're on the PR's branch or reviewing remotely
-    const currentBranch = (
+    const originalBranch = (
       await this.execCommand(['git', 'branch', '--show-current'], cwd, cancellationToken)
     ).trim();
 
     const prBranch = prInfo.headBranch.replace(/^origin\//, '');
-    const isRemote = !!prNumber && currentBranch !== prBranch;
+    const needsBranchSwitch = !!prNumber && originalBranch !== prBranch;
+    let didStash = false;
 
-    if (isRemote) {
-      console.log(`[ReviewMP-PR] Reviewing remote branch "${prBranch}" (you're on "${currentBranch}")`);
-    }
+    if (needsBranchSwitch) {
+      console.log(`[ReviewMP-PR] Switching to branch "${prBranch}" for review (currently on "${originalBranch}")...`);
 
-    console.log(`[ReviewMP-PR] Reviewing PR #${prInfo.number}: ${prInfo.title}`);
-    console.log(`[ReviewMP-PR] ${prInfo.baseBranch} <- ${prInfo.headBranch}`);
-
-    // Step 2: Get the diff
-    const diffTarget = isRemote ? prInfo.headBranch : 'HEAD';
-    const diffOutput = await this.execCommand(
-      ['git', 'diff', `${prInfo.baseBranch}...${diffTarget}`, '-U8'],
-      cwd,
-      cancellationToken
-    );
-
-    if (!diffOutput.trim()) {
-      return { comments: [], isRemote };
-    }
-
-    // Step 3: Split by file
-    const fileChunks = this.splitDiffByFile(diffOutput);
-    console.log(`[ReviewMP-PR] ${fileChunks.length} file(s) changed`);
-
-    // Small PRs: single review (preserves full cross-file context naturally)
-    const totalLines = fileChunks.reduce((sum, c) => sum + c.diff.split('\n').length, 0);
-    if (fileChunks.length <= 3 && totalLines <= 500) {
-      const comments = await this.reviewSingleDiff(diffOutput, prInfo, cancellationToken);
-      return { comments, isRemote };
-    }
-
-    // Step 4: Build import graph and cluster related files
-    // For remote PRs, extract imports from the diff itself (files may not exist locally)
-    // For local PRs, read files from disk for more accurate import detection
-    const importGraph = await this.buildImportGraphFromGit(fileChunks, cwd, diffTarget, cancellationToken);
-
-    const clusters = this.clusterByImports(fileChunks, importGraph);
-    console.log(`[ReviewMP-PR] Grouped into ${clusters.length} cluster(s): ${clusters.map(c => `[${c.map(f => f.file).join(', ')}]`).join(', ')}`);
-
-    // Step 5: Pass 1 — review each cluster
-    const allComments: ReviewComment[] = [];
-    const concurrency = 4;
-
-    for (let i = 0; i < clusters.length; i += concurrency) {
-      if (cancellationToken.isCancellationRequested) {
-        break;
+      // Stash uncommitted changes if any
+      const statusOutput = await this.execCommand(['git', 'status', '--porcelain'], cwd, cancellationToken);
+      if (statusOutput.trim()) {
+        console.log('[ReviewMP-PR] Stashing uncommitted changes...');
+        await this.execCommand(['git', 'stash'], cwd, cancellationToken);
+        didStash = true;
       }
 
-      const batch = clusters.slice(i, i + concurrency);
-      const results = await Promise.allSettled(
-        batch.map(cluster =>
-          cluster.length === 1
-            ? this.reviewFileChunk(cluster[0], prInfo, cancellationToken)
-            : this.reviewCluster(cluster, prInfo, cancellationToken)
-        )
+      // Checkout the PR branch
+      try {
+        await this.execCommand(['git', 'checkout', prBranch], cwd, cancellationToken);
+      } catch {
+        console.log(`[ReviewMP-PR] Local checkout failed, fetching from origin...`);
+        await this.execCommand(
+          ['git', 'fetch', 'origin', prBranch],
+          cwd,
+          cancellationToken
+        );
+        await this.execCommand(['git', 'checkout', prBranch], cwd, cancellationToken);
+      }
+      console.log(`[ReviewMP-PR] Now on branch "${prBranch}"`);
+    }
+
+    try {
+      // After branch switch, files are local — isRemote is false
+      const isRemote = false;
+
+      console.log(`[ReviewMP-PR] Reviewing PR #${prInfo.number}: ${prInfo.title}`);
+      console.log(`[ReviewMP-PR] ${prInfo.baseBranch} <- ${prInfo.headBranch}`);
+
+      // Step 2: Get the diff (always use HEAD since we're on the correct branch now)
+      const diffTarget = 'HEAD';
+      const diffOutput = await this.execCommand(
+        ['git', 'diff', `${prInfo.baseBranch}...${diffTarget}`, '-U8'],
+        cwd,
+        cancellationToken
       );
 
-      for (const result of results) {
-        if (result.status === 'fulfilled') {
-          allComments.push(...result.value);
-        } else {
-          console.log('[ReviewMP-PR] Cluster review failed:', result.reason);
+      if (!diffOutput.trim()) {
+        return { comments: [], isRemote };
+      }
+
+      // Step 3: Split by file
+      const fileChunks = this.splitDiffByFile(diffOutput);
+      console.log(`[ReviewMP-PR] ${fileChunks.length} file(s) changed`);
+
+      // Small PRs: single review (preserves full cross-file context naturally)
+      const totalLines = fileChunks.reduce((sum, c) => sum + c.diff.split('\n').length, 0);
+      if (fileChunks.length <= 3 && totalLines <= 500) {
+        const comments = await this.reviewSingleDiff(diffOutput, prInfo, cancellationToken);
+        return { comments, isRemote };
+      }
+
+      // Step 4: Build import graph and cluster related files
+      const importGraph = await this.buildImportGraphFromGit(fileChunks, cwd, diffTarget, cancellationToken);
+
+      const clusters = this.clusterByImports(fileChunks, importGraph);
+      console.log(`[ReviewMP-PR] Grouped into ${clusters.length} cluster(s): ${clusters.map(c => `[${c.map(f => f.file).join(', ')}]`).join(', ')}`);
+
+      // Step 5: Pass 1 — review each cluster
+      const allComments: ReviewComment[] = [];
+      const concurrency = 4;
+
+      for (let i = 0; i < clusters.length; i += concurrency) {
+        if (cancellationToken.isCancellationRequested) {
+          break;
+        }
+
+        const batch = clusters.slice(i, i + concurrency);
+        const results = await Promise.allSettled(
+          batch.map(cluster =>
+            cluster.length === 1
+              ? this.reviewFileChunk(cluster[0], prInfo, cancellationToken)
+              : this.reviewCluster(cluster, prInfo, cancellationToken)
+          )
+        );
+
+        for (const result of results) {
+          if (result.status === 'fulfilled') {
+            allComments.push(...result.value);
+          } else {
+            console.log('[ReviewMP-PR] Cluster review failed:', result.reason);
+          }
+        }
+      }
+
+      // Step 6: Pass 2 — cross-file consistency review
+      if (clusters.length > 1 && !cancellationToken.isCancellationRequested) {
+        try {
+          const crossFileComments = await this.reviewCrossFile(
+            fileChunks,
+            allComments,
+            prInfo,
+            cancellationToken
+          );
+          allComments.push(...crossFileComments);
+        } catch (error) {
+          console.log('[ReviewMP-PR] Cross-file review failed (non-fatal):', error);
+        }
+      }
+
+      // Step 7: Final dedup — merge comments on the same file+line
+      const dedupedComments = this.deduplicateComments(allComments);
+      console.log(`[ReviewMP-PR] Dedup: ${allComments.length} -> ${dedupedComments.length} comments`);
+
+      return { comments: dedupedComments, isRemote };
+    } finally {
+      // Always restore original branch
+      if (needsBranchSwitch) {
+        console.log(`[ReviewMP-PR] Restoring branch "${originalBranch}"...`);
+        try {
+          await this.execCommand(['git', 'checkout', originalBranch], cwd, cancellationToken);
+        } catch (e) {
+          console.error(`[ReviewMP-PR] Failed to restore branch "${originalBranch}":`, e);
+        }
+        if (didStash) {
+          console.log('[ReviewMP-PR] Restoring stashed changes...');
+          try {
+            await this.execCommand(['git', 'stash', 'pop'], cwd, cancellationToken);
+          } catch (e) {
+            console.error('[ReviewMP-PR] Failed to pop stash:', e);
+          }
         }
       }
     }
-
-    // Step 6: Pass 2 — cross-file consistency review
-    if (clusters.length > 1 && !cancellationToken.isCancellationRequested) {
-      try {
-        const crossFileComments = await this.reviewCrossFile(
-          fileChunks,
-          allComments,
-          prInfo,
-          cancellationToken
-        );
-        allComments.push(...crossFileComments);
-      } catch (error) {
-        console.log('[ReviewMP-PR] Cross-file review failed (non-fatal):', error);
-      }
-    }
-
-    // Step 7: Final dedup — merge comments on the same file+line
-    const dedupedComments = this.deduplicateComments(allComments);
-    console.log(`[ReviewMP-PR] Dedup: ${allComments.length} -> ${dedupedComments.length} comments`);
-
-    return { comments: dedupedComments, isRemote };
   }
 
   // ─── PR Detection ──────────────────────────────────────────────────
