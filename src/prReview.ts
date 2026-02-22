@@ -131,27 +131,10 @@ export class PRReviewService {
     let newLineNum = range.newHunk.startLine;
     let oldLineNum = range.oldHunk.startLine;
 
-    // Track context line indices for noise reduction
-    const contextIndices: number[] = [];
-    bodyLines.forEach((line, idx) => {
-      if (!line.startsWith('+') && !line.startsWith('-')) {
-        contextIndices.push(idx);
-      }
-    });
-
-    // First 3 and last 3 context lines should skip line number annotations
-    const skipAnnotation = new Set<number>();
-    for (let i = 0; i < Math.min(3, contextIndices.length); i++) {
-      skipAnnotation.add(contextIndices[i]);
-    }
-    for (let i = Math.max(0, contextIndices.length - 3); i < contextIndices.length; i++) {
-      skipAnnotation.add(contextIndices[i]);
-    }
-
-    bodyLines.forEach((line, idx) => {
+    bodyLines.forEach((line) => {
       if (line.startsWith('+')) {
         // Added line — always include line number
-        newLines.push(`${newLineNum}: ${line.substring(1)}`);
+        newLines.push(`${newLineNum}: +${line.substring(1)}`);
         newLineNum++;
       } else if (line.startsWith('-')) {
         // Removed line
@@ -159,11 +142,7 @@ export class PRReviewService {
         oldLineNum++;
       } else {
         // Context line
-        if (skipAnnotation.has(idx)) {
-          newLines.push(line);
-        } else {
-          newLines.push(`${newLineNum}: ${line}`);
-        }
+        newLines.push(`${newLineNum}: ${line}`);
         oldLines.push(line);
         newLineNum++;
         oldLineNum++;
@@ -225,15 +204,13 @@ ${changeSections}
 
 Return your review as a JSON array. Each element must have these fields:
 - "file": always "${filename}"
-- "startLine": first line number of the issue (from new_hunk line numbers)
-- "endLine": last line number of the issue
-- "line": same as startLine
+- "line": the line number of the issue (use the exact line numbers shown in the code)
 - "message": description of the issue
 - "severity": one of "error", "warning", "info", "suggestion"
 - "fix": (optional) suggested replacement code
 
 Rules:
-- Use line numbers from the new_hunk sections only
+- Use the line numbers shown in the code
 - Focus on bugs, logic errors, security issues, missing error handling
 - Do NOT comment on style, formatting, or minor naming issues
 - Do NOT flag missing files/components that may exist in other PR files
@@ -668,12 +645,11 @@ Rules:
           item !== null &&
           typeof (item as Record<string, unknown>).message === 'string' &&
           typeof (item as Record<string, unknown>).file === 'string' &&
-          (typeof (item as Record<string, unknown>).line === 'number' ||
-           typeof (item as Record<string, unknown>).startLine === 'number')
+          typeof (item as Record<string, unknown>).line === 'number'
       )
       .map(item => ({
         file: item.file as string,
-        line: ((item.startLine as number | undefined) ?? (item.line as number)) - 1,
+        line: (item.line as number) - 1,
         message: item.message as string,
         fix: typeof item.fix === 'string' ? item.fix : undefined,
         severity: this.validateSeverity(item.severity),
