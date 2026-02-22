@@ -95,9 +95,7 @@ export class PRReviewService {
     // Step 4: Build import graph and cluster related files
     // For remote PRs, extract imports from the diff itself (files may not exist locally)
     // For local PRs, read files from disk for more accurate import detection
-    const importGraph = isRemote
-      ? this.buildImportGraphFromDiff(fileChunks)
-      : await this.buildImportGraphFromDisk(fileChunks, cwd, cancellationToken);
+    const importGraph = await this.buildImportGraphFromGit(fileChunks, cwd, diffTarget, cancellationToken);
 
     const clusters = this.clusterByImports(fileChunks, importGraph);
     console.log(`[ReviewMP-PR] Grouped into ${clusters.length} cluster(s): ${clusters.map(c => `[${c.map(f => f.file).join(', ')}]`).join(', ')}`);
@@ -268,48 +266,14 @@ export class PRReviewService {
   // ─── Import Graph & Clustering ─────────────────────────────────────
 
   /**
-   * Build import graph from the DIFF content itself.
-   * Used for remote PRs where files may not exist locally.
-   * Extracts import statements from added (+) lines in the diff.
+   * Build import graph by reading file contents from git at the given ref.
+   * Works for both local and remote PRs since it uses `git show ref:path`
+   * rather than reading from disk.
    */
-  private buildImportGraphFromDiff(
-    fileChunks: FileChunk[]
-  ): Map<string, Set<string>> {
-    const graph = new Map<string, Set<string>>();
-    const changedFiles = new Set(fileChunks.map(c => c.file));
-
-    for (const chunk of fileChunks) {
-      graph.set(chunk.file, new Set());
-
-      // Extract ALL lines from the diff (added + context) to find imports
-      const lines = chunk.diff.split('\n');
-      const contentLines: string[] = [];
-
-      for (const line of lines) {
-        // Added lines (start with +, not +++)
-        if (line.startsWith('+') && !line.startsWith('+++')) {
-          contentLines.push(line.substring(1));
-        }
-        // Context lines (start with space)
-        else if (line.startsWith(' ')) {
-          contentLines.push(line.substring(1));
-        }
-      }
-
-      const content = contentLines.join('\n');
-      this.extractImports(chunk.file, content, changedFiles, graph);
-    }
-
-    return graph;
-  }
-
-  /**
-   * Build import graph from local files on disk.
-   * Used for local PRs where we're on the correct branch.
-   */
-  private async buildImportGraphFromDisk(
+  private async buildImportGraphFromGit(
     fileChunks: FileChunk[],
     cwd: string,
+    headRef: string,
     cancellationToken: vscode.CancellationToken
   ): Promise<Map<string, Set<string>>> {
     const graph = new Map<string, Set<string>>();
@@ -323,11 +287,14 @@ export class PRReviewService {
       graph.set(chunk.file, new Set());
 
       try {
-        const fullPath = path.join(cwd, chunk.file);
-        const content = await this.readFile(fullPath, cancellationToken);
+        const content = await this.execCommand(
+          ['git', 'show', `${headRef}:${chunk.file}`],
+          cwd,
+          cancellationToken
+        );
         this.extractImports(chunk.file, content, changedFiles, graph);
       } catch {
-        // File deleted or unreadable — fall back to diff-based extraction
+        // File doesn't exist at this ref (e.g. deleted) — fall back to diff-based extraction
         const lines = chunk.diff.split('\n');
         const contentLines: string[] = [];
         for (const line of lines) {
@@ -799,33 +766,6 @@ Output as JSON array with: file, line, message, severity`;
   }
 
   // ─── Utilities ─────────────────────────────────────────────────────
-
-  private readFile(
-    filePath: string,
-    cancellationToken: vscode.CancellationToken
-  ): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const proc = spawn('cat', [filePath], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-
-      let stdout = '';
-      proc.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      cancellationToken.onCancellationRequested(() => {
-        proc.kill();
-        reject(new Error('Cancelled'));
-      });
-
-      proc.on('close', (code) => {
-        code === 0 ? resolve(stdout) : reject(new Error(`Failed to read ${filePath}`));
-      });
-
-      proc.on('error', reject);
-    });
-  }
 
   private execCommand(
     args: string[],
