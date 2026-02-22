@@ -347,13 +347,8 @@ async function placePRComments(
     const ext = filePath.split('.').pop() || '';
     const languageId = ext2lang[ext] || ext;
 
-    // Check if file exists locally before trying to attach comments
-    if (fs.existsSync(fileUri.fsPath)) {
-      commentController.addComments(fileUri, fileComments, languageId);
-      placed += fileComments.length;
-    } else {
-      skippedFileComments.push({ file: filePath, comments: fileComments });
-    }
+    commentController.addComments(fileUri, fileComments, languageId);
+    placed += fileComments.length;
   }
 
   // Dump skipped comments to Output channel
