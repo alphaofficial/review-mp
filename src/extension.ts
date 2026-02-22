@@ -1,16 +1,19 @@
 import * as vscode from 'vscode';
 import { ReviewCommentController, ReviewComment } from './comments';
 import { OpenCodeService } from './opencode';
+import { PRReviewService } from './prReview';
 import { GitWatcher } from './gitWatcher';
 
 let commentController: ReviewCommentController;
 let opencodeService: OpenCodeService;
+let prReviewService: PRReviewService;
 let gitWatcher: GitWatcher | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('ReviewMP is now active');
 
   opencodeService = new OpenCodeService();
+  prReviewService = new PRReviewService();
   commentController = new ReviewCommentController(context, opencodeService);
 
   // Only initialize git watcher if auto-review settings are enabled
@@ -104,6 +107,63 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  const reviewPRCommand = vscode.commands.registerCommand(
+    'reviewmp.reviewPR',
+    async () => {
+      const input = await vscode.window.showInputBox({
+        prompt: 'Enter PR number (leave empty to auto-detect from current branch)',
+        placeHolder: 'e.g. 123',
+      });
+
+      const prNumber = input && input.trim() !== '' ? parseInt(input.trim(), 10) : undefined;
+      if (input && input.trim() !== '' && isNaN(prNumber!)) {
+        vscode.window.showErrorMessage('Invalid PR number');
+        return;
+      }
+
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `ReviewMP: Reviewing PR${prNumber ? ` #${prNumber}` : ' (auto-detect)'}...`,
+          cancellable: true,
+        },
+        async (progress, token) => {
+          try {
+            commentController.clearAllComments();
+            const result = await prReviewService.reviewPR(prNumber, token);
+
+            if (token.isCancellationRequested) {
+              return;
+            }
+
+            if (result.comments.length === 0) {
+              vscode.window.showInformationMessage('PR review: no issues found');
+              return;
+            }
+
+            // Place comments on local files where possible.
+            // For remote PRs, files that don't exist locally go to the Output panel.
+            const { placed, skipped } = await placePRComments(result.comments);
+
+            if (skipped > 0) {
+              vscode.window.showInformationMessage(
+                `ReviewMP: ${placed} comment(s) inline, ${skipped} in Output panel (files not available locally)`
+              );
+            } else {
+              vscode.window.showInformationMessage(
+                `ReviewMP: Found ${result.comments.length} comment(s) across PR`
+              );
+            }
+          } catch (error) {
+            if (error instanceof Error) {
+              vscode.window.showErrorMessage(`ReviewMP PR Error: ${error.message}`);
+            }
+          }
+        }
+      );
+    }
+  );
+
   context.subscriptions.push(
     reviewFileCommand,
     reviewSelectionCommand,
@@ -111,6 +171,7 @@ export function activate(context: vscode.ExtensionContext) {
     reviewUncommittedCommand,
     reviewLastCommitCommand,
     reviewBranchCommand,
+    reviewPRCommand,
     clearCommentsCommand,
     commentController
   );
@@ -246,6 +307,77 @@ async function addDiffComments(comments: ReviewComment[]) {
 
     commentController.addComments(uri, fileComments, languageId);
   }
+}
+
+/**
+ * Place PR review comments on local files where they exist.
+ * Files that don't exist locally get their comments written to an Output channel.
+ * Does NOT open files — only attaches comments to files the user opens themselves.
+ */
+async function placePRComments(
+  comments: ReviewComment[]
+): Promise<{ placed: number; skipped: number }> {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    return { placed: 0, skipped: 0 };
+  }
+
+  const fs = await import('fs');
+
+  const commentsByFile = new Map<string, ReviewComment[]>();
+  for (const comment of comments) {
+    const existing = commentsByFile.get(comment.file) || [];
+    existing.push(comment);
+    commentsByFile.set(comment.file, existing);
+  }
+
+  const ext2lang: Record<string, string> = {
+    ts: 'typescript', tsx: 'typescriptreact',
+    js: 'javascript', jsx: 'javascriptreact',
+    py: 'python', go: 'go', rs: 'rust', java: 'java',
+    rb: 'ruby', php: 'php', cs: 'csharp', cpp: 'cpp',
+    c: 'c', swift: 'swift', kt: 'kotlin',
+  };
+
+  let placed = 0;
+  const skippedFileComments: Array<{ file: string; comments: ReviewComment[] }> = [];
+
+  for (const [filePath, fileComments] of commentsByFile) {
+    const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, filePath);
+    const ext = filePath.split('.').pop() || '';
+    const languageId = ext2lang[ext] || ext;
+
+    commentController.addComments(fileUri, fileComments, languageId);
+    placed += fileComments.length;
+  }
+
+  // Dump skipped comments to Output channel
+  if (skippedFileComments.length > 0) {
+    const totalSkipped = skippedFileComments.reduce((sum, f) => sum + f.comments.length, 0);
+    const channel = vscode.window.createOutputChannel('ReviewMP - PR Review');
+    channel.clear();
+    channel.appendLine(
+      `PR Review — ${skippedFileComments.length} file(s) not available locally.\n` +
+      `Checkout the PR branch for inline comments.\n`
+    );
+
+    for (const { file, comments: fileComments } of skippedFileComments) {
+      channel.appendLine(`── ${file} (${fileComments.length} comments) ──`);
+      for (const c of fileComments) {
+        const severity = c.severity || 'review';
+        channel.appendLine(`  L${c.line + 1} [${severity}]: ${c.message}`);
+        if (c.fix) {
+          channel.appendLine(`    Fix: ${c.fix}`);
+        }
+      }
+      channel.appendLine('');
+    }
+
+    channel.show(true);
+    return { placed, skipped: totalSkipped };
+  }
+
+  return { placed, skipped: 0 };
 }
 
 export function deactivate() {
