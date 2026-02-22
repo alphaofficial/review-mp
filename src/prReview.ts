@@ -17,12 +17,8 @@ interface PRInfo {
 
 export interface PRReviewResult {
   comments: ReviewComment[];
-  /** Git ref (commit SHA) of the PR head when reviewing a remote branch. Undefined = use local files. */
-  reviewRef?: string;
-  /** Git ref (commit SHA) of the merge-base between PR base and head. Used for diff views. */
-  baseRef?: string;
-  /** Files that are newly added in the PR (don't exist at baseRef). */
-  newFiles?: Set<string>;
+  /** When true, comments target remote files (may not exist locally). */
+  isRemote: boolean;
 }
 
 export class PRReviewService {
@@ -64,40 +60,17 @@ export class PRReviewService {
     ).trim();
 
     const prBranch = prInfo.headBranch.replace(/^origin\//, '');
-    const isLocalBranch = !prNumber || currentBranch === prBranch;
+    const isRemote = !!prNumber && currentBranch !== prBranch;
 
-    // When reviewing a different branch's PR, resolve the head commit
-    // so we can open files at that ref via VS Code's git content provider
-    let reviewRef: string | undefined;
-    let baseRef: string | undefined;
-    if (!isLocalBranch) {
-      reviewRef = (
-        await this.execCommand(
-          ['git', 'rev-parse', prInfo.headBranch],
-          cwd,
-          cancellationToken
-        )
-      ).trim();
-
-      // Compute the merge-base for accurate diff views
-      baseRef = (
-        await this.execCommand(
-          ['git', 'merge-base', prInfo.baseBranch, prInfo.headBranch],
-          cwd,
-          cancellationToken
-        )
-      ).trim();
-
-      console.log(`[ReviewMP-PR] Reviewing remote branch "${prBranch}" at ${reviewRef.substring(0, 8)}, base ${baseRef.substring(0, 8)}`);
+    if (isRemote) {
+      console.log(`[ReviewMP-PR] Reviewing remote branch "${prBranch}" (you're on "${currentBranch}")`);
     }
 
     console.log(`[ReviewMP-PR] Reviewing PR #${prInfo.number}: ${prInfo.title}`);
     console.log(`[ReviewMP-PR] ${prInfo.baseBranch} <- ${prInfo.headBranch}`);
 
     // Step 2: Get the diff
-    // Local branch: diff base...HEAD (includes uncommitted work)
-    // Remote branch: diff base...remote-head (exact PR diff)
-    const diffTarget = isLocalBranch ? 'HEAD' : prInfo.headBranch;
+    const diffTarget = isRemote ? prInfo.headBranch : 'HEAD';
     const diffOutput = await this.execCommand(
       ['git', 'diff', `${prInfo.baseBranch}...${diffTarget}`, '-U8'],
       cwd,
@@ -105,23 +78,27 @@ export class PRReviewService {
     );
 
     if (!diffOutput.trim()) {
-      return { comments: [], reviewRef, baseRef };
+      return { comments: [], isRemote };
     }
 
-    // Step 3: Split by file and detect new files
+    // Step 3: Split by file
     const fileChunks = this.splitDiffByFile(diffOutput);
-    const newFiles = this.detectNewFiles(diffOutput);
-    console.log(`[ReviewMP-PR] ${fileChunks.length} file(s) changed, ${newFiles.size} new`);
+    console.log(`[ReviewMP-PR] ${fileChunks.length} file(s) changed`);
 
     // Small PRs: single review (preserves full cross-file context naturally)
     const totalLines = fileChunks.reduce((sum, c) => sum + c.diff.split('\n').length, 0);
     if (fileChunks.length <= 3 && totalLines <= 500) {
       const comments = await this.reviewSingleDiff(diffOutput, prInfo, cancellationToken);
-      return { comments, reviewRef, baseRef, newFiles };
+      return { comments, isRemote };
     }
 
     // Step 4: Build import graph and cluster related files
-    const importGraph = await this.buildImportGraph(fileChunks, cwd, cancellationToken);
+    // For remote PRs, extract imports from the diff itself (files may not exist locally)
+    // For local PRs, read files from disk for more accurate import detection
+    const importGraph = isRemote
+      ? this.buildImportGraphFromDiff(fileChunks)
+      : await this.buildImportGraphFromDisk(fileChunks, cwd, cancellationToken);
+
     const clusters = this.clusterByImports(fileChunks, importGraph);
     console.log(`[ReviewMP-PR] Grouped into ${clusters.length} cluster(s): ${clusters.map(c => `[${c.map(f => f.file).join(', ')}]`).join(', ')}`);
 
@@ -167,7 +144,7 @@ export class PRReviewService {
       }
     }
 
-    return { comments: allComments, reviewRef, baseRef, newFiles };
+    return { comments: allComments, isRemote };
   }
 
   // ─── PR Detection ──────────────────────────────────────────────────
@@ -177,7 +154,6 @@ export class PRReviewService {
     cwd: string,
     cancellationToken: vscode.CancellationToken
   ): Promise<PRInfo> {
-    // Use gh CLI to get PR details
     const json = await this.execCommand(
       ['gh', 'pr', 'view', String(prNumber), '--json', 'number,title,baseRefName,headRefName'],
       cwd,
@@ -191,9 +167,7 @@ export class PRReviewService {
       ['git', 'fetch', 'origin', data.baseRefName, data.headRefName],
       cwd,
       cancellationToken
-    ).catch(() => {
-      // Non-fatal — branches may already be local
-    });
+    ).catch(() => {});
 
     return {
       number: data.number,
@@ -207,7 +181,6 @@ export class PRReviewService {
     cwd: string,
     cancellationToken: vscode.CancellationToken
   ): Promise<PRInfo> {
-    // Try gh pr view for current branch
     try {
       const json = await this.execCommand(
         ['gh', 'pr', 'view', '--json', 'number,title,baseRefName,headRefName'],
@@ -223,7 +196,6 @@ export class PRReviewService {
         title: data.title,
       };
     } catch {
-      // No PR for current branch — fall back to diff against base
       const currentBranch = (
         await this.execCommand(['git', 'branch', '--show-current'], cwd, cancellationToken)
       ).trim();
@@ -243,7 +215,6 @@ export class PRReviewService {
     cwd: string,
     cancellationToken: vscode.CancellationToken
   ): Promise<string> {
-    // Try common base branches
     for (const candidate of ['origin/main', 'origin/master', 'main', 'master']) {
       try {
         await this.execCommand(
@@ -257,7 +228,6 @@ export class PRReviewService {
       }
     }
 
-    // Ask user
     const input = await vscode.window.showInputBox({
       prompt: 'Could not detect base branch. Enter the base branch:',
       placeHolder: 'main',
@@ -295,30 +265,49 @@ export class PRReviewService {
     return chunks;
   }
 
-  /**
-   * Detect newly added files from the diff output.
-   * New files have "--- /dev/null" in their diff header.
-   */
-  private detectNewFiles(diffOutput: string): Set<string> {
-    const newFiles = new Set<string>();
-    const lines = diffOutput.split('\n');
-    let currentFile = '';
-
-    for (const line of lines) {
-      if (line.startsWith('diff --git')) {
-        const match = line.match(/diff --git a\/.+ b\/(.+)/);
-        currentFile = match ? match[1] : '';
-      } else if (line === '--- /dev/null' && currentFile) {
-        newFiles.add(currentFile);
-      }
-    }
-
-    return newFiles;
-  }
-
   // ─── Import Graph & Clustering ─────────────────────────────────────
 
-  private async buildImportGraph(
+  /**
+   * Build import graph from the DIFF content itself.
+   * Used for remote PRs where files may not exist locally.
+   * Extracts import statements from added (+) lines in the diff.
+   */
+  private buildImportGraphFromDiff(
+    fileChunks: FileChunk[]
+  ): Map<string, Set<string>> {
+    const graph = new Map<string, Set<string>>();
+    const changedFiles = new Set(fileChunks.map(c => c.file));
+
+    for (const chunk of fileChunks) {
+      graph.set(chunk.file, new Set());
+
+      // Extract ALL lines from the diff (added + context) to find imports
+      const lines = chunk.diff.split('\n');
+      const contentLines: string[] = [];
+
+      for (const line of lines) {
+        // Added lines (start with +, not +++)
+        if (line.startsWith('+') && !line.startsWith('+++')) {
+          contentLines.push(line.substring(1));
+        }
+        // Context lines (start with space)
+        else if (line.startsWith(' ')) {
+          contentLines.push(line.substring(1));
+        }
+      }
+
+      const content = contentLines.join('\n');
+      this.extractImports(chunk.file, content, changedFiles, graph);
+    }
+
+    return graph;
+  }
+
+  /**
+   * Build import graph from local files on disk.
+   * Used for local PRs where we're on the correct branch.
+   */
+  private async buildImportGraphFromDisk(
     fileChunks: FileChunk[],
     cwd: string,
     cancellationToken: vscode.CancellationToken
@@ -336,31 +325,52 @@ export class PRReviewService {
       try {
         const fullPath = path.join(cwd, chunk.file);
         const content = await this.readFile(fullPath, cancellationToken);
-
-        const importPatterns = [
-          /from\s+['"]([^'"]+)['"]/g,
-          /import\s*\(['"]([^'"]+)['"]\)/g,
-          /require\s*\(['"]([^'"]+)['"]\)/g,
-        ];
-
-        for (const pattern of importPatterns) {
-          let match;
-          while ((match = pattern.exec(content)) !== null) {
-            const importPath = match[1];
-            if (importPath.startsWith('.')) {
-              const resolved = this.resolveImportPath(chunk.file, importPath, changedFiles);
-              if (resolved) {
-                graph.get(chunk.file)!.add(resolved);
-              }
-            }
+        this.extractImports(chunk.file, content, changedFiles, graph);
+      } catch {
+        // File deleted or unreadable — fall back to diff-based extraction
+        const lines = chunk.diff.split('\n');
+        const contentLines: string[] = [];
+        for (const line of lines) {
+          if (line.startsWith('+') && !line.startsWith('+++')) {
+            contentLines.push(line.substring(1));
+          } else if (line.startsWith(' ')) {
+            contentLines.push(line.substring(1));
           }
         }
-      } catch {
-        // File deleted or unreadable — skip
+        this.extractImports(chunk.file, contentLines.join('\n'), changedFiles, graph);
       }
     }
 
     return graph;
+  }
+
+  /**
+   * Extract import statements from file content and add edges to the graph.
+   */
+  private extractImports(
+    file: string,
+    content: string,
+    changedFiles: Set<string>,
+    graph: Map<string, Set<string>>
+  ): void {
+    const importPatterns = [
+      /from\s+['"]([^'"]+)['"]/g,
+      /import\s*\(['"]([^'"]+)['"]\)/g,
+      /require\s*\(['"]([^'"]+)['"]\)/g,
+    ];
+
+    for (const pattern of importPatterns) {
+      let match;
+      while ((match = pattern.exec(content)) !== null) {
+        const importPath = match[1];
+        if (importPath.startsWith('.')) {
+          const resolved = this.resolveImportPath(file, importPath, changedFiles);
+          if (resolved) {
+            graph.get(file)!.add(resolved);
+          }
+        }
+      }
+    }
   }
 
   private resolveImportPath(
@@ -745,9 +755,7 @@ Output as JSON array with: file, line, message, severity`;
     if (jsonMatch) {
       try {
         return this.validateComments(JSON.parse(jsonMatch[0]));
-      } catch {
-        // Parsing failed
-      }
+      } catch {}
     }
 
     return [];

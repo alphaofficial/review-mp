@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { ReviewCommentController, ReviewComment } from './comments';
 import { OpenCodeService } from './opencode';
-import { PRReviewService, PRReviewResult } from './prReview';
+import { PRReviewService } from './prReview';
 import { GitWatcher } from './gitWatcher';
 
 let commentController: ReviewCommentController;
@@ -140,17 +140,19 @@ export function activate(context: vscode.ExtensionContext) {
               return;
             }
 
-            if (result.reviewRef && result.baseRef) {
-              // Remote branch — open diff views and place comments on the PR's code
-              await addPRComments(result.comments, result.reviewRef, result.baseRef, result.newFiles || new Set());
-            } else {
-              // Local branch — place comments on local workspace files
-              await addDiffComments(result.comments);
-            }
+            // Place comments on local files where possible.
+            // For remote PRs, files that don't exist locally go to the Output panel.
+            const { placed, skipped } = await placePRComments(result.comments);
 
-            vscode.window.showInformationMessage(
-              `ReviewMP: Found ${result.comments.length} comment(s) across PR`
-            );
+            if (skipped > 0) {
+              vscode.window.showInformationMessage(
+                `ReviewMP: ${placed} comment(s) inline, ${skipped} in Output panel (files not available locally)`
+              );
+            } else {
+              vscode.window.showInformationMessage(
+                `ReviewMP: Found ${result.comments.length} comment(s) across PR`
+              );
+            }
           } catch (error) {
             if (error instanceof Error) {
               vscode.window.showErrorMessage(`ReviewMP PR Error: ${error.message}`);
@@ -307,23 +309,19 @@ async function addDiffComments(comments: ReviewComment[]) {
 }
 
 /**
- * Place comments on PR files by opening diff views (base vs head) via the git extension API.
- * Comments attach to the right side (head/new code) of each diff view.
- * Falls back to opening files at a git ref, then to local files.
+ * Place PR review comments on local files where they exist.
+ * Files that don't exist locally get their comments written to an Output channel.
+ * Does NOT open files — only attaches comments to files the user opens themselves.
  */
-async function addPRComments(comments: ReviewComment[], headRef: string, baseRef: string, newFiles: Set<string>) {
+async function placePRComments(
+  comments: ReviewComment[]
+): Promise<{ placed: number; skipped: number }> {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   if (!workspaceFolder) {
-    return;
+    return { placed: 0, skipped: 0 };
   }
 
-  // Get the git extension API for proper URI construction
-  const gitExtension = vscode.extensions.getExtension<{ getAPI(version: number): GitAPI }>('vscode.git');
-  const gitApi = gitExtension?.isActive
-    ? gitExtension.exports.getAPI(1)
-    : undefined;
-
-  const skippedFiles: string[] = [];
+  const fs = await import('fs');
 
   const commentsByFile = new Map<string, ReviewComment[]>();
   for (const comment of comments) {
@@ -340,70 +338,50 @@ async function addPRComments(comments: ReviewComment[], headRef: string, baseRef
     c: 'c', swift: 'swift', kt: 'kotlin',
   };
 
+  let placed = 0;
+  const skippedFileComments: Array<{ file: string; comments: ReviewComment[] }> = [];
+
   for (const [filePath, fileComments] of commentsByFile) {
     const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, filePath);
     const ext = filePath.split('.').pop() || '';
     const languageId = ext2lang[ext] || ext;
 
-    let commentUri: vscode.Uri = fileUri; // fallback
-
-    // For modified files that exist locally: open and place comments
-    // For new files or files that don't exist locally: try git show, fall back to skip
-    try {
-      // First try: open the local file (works when on the PR branch or file exists locally)
-      await vscode.window.showTextDocument(fileUri, { preview: false, preserveFocus: true });
-    } catch {
-      // File doesn't exist locally — try opening at the head ref via git extension
-      if (gitApi) {
-        try {
-          const headUri = gitApi.toGitUri(fileUri, headRef);
-          await vscode.window.showTextDocument(headUri, { preview: false, preserveFocus: true });
-          commentUri = headUri;
-        } catch {
-          console.log(`[ReviewMP-PR] Skipping ${filePath} — not available locally or at ref`);
-          skippedFiles.push(filePath);
-          continue;
-        }
-      } else {
-        console.log(`[ReviewMP-PR] Skipping ${filePath} — not available locally`);
-        skippedFiles.push(filePath);
-        continue;
-      }
+    // Check if file exists locally before trying to attach comments
+    if (fs.existsSync(fileUri.fsPath)) {
+      commentController.addComments(fileUri, fileComments, languageId);
+      placed += fileComments.length;
+    } else {
+      skippedFileComments.push({ file: filePath, comments: fileComments });
     }
-
-    commentController.addComments(commentUri, fileComments, languageId);
   }
 
-  // Show skipped files' comments in output channel so they're not lost
-  if (skippedFiles.length > 0) {
-    const skippedComments = comments.filter(c => skippedFiles.includes(c.file));
-    if (skippedComments.length > 0) {
-      const channel = vscode.window.createOutputChannel('ReviewMP - PR Review');
-      channel.clear();
-      channel.appendLine(`PR Review — ${skippedFiles.length} file(s) not available locally (checkout the PR branch for inline comments):\n`);
-      for (const file of skippedFiles) {
-        const fileComments = skippedComments.filter(c => c.file === file);
-        channel.appendLine(`── ${file} (${fileComments.length} comments) ──`);
-        for (const c of fileComments) {
-          channel.appendLine(`  L${c.line + 1} [${c.severity || 'review'}]: ${c.message}`);
-          if (c.fix) {
-            channel.appendLine(`    Fix: ${c.fix}`);
-          }
-        }
-        channel.appendLine('');
-      }
-      channel.show(true);
-    }
-
-    vscode.window.showWarningMessage(
-      `${skippedFiles.length} file(s) not available locally — comments shown in Output panel.`
+  // Dump skipped comments to Output channel
+  if (skippedFileComments.length > 0) {
+    const totalSkipped = skippedFileComments.reduce((sum, f) => sum + f.comments.length, 0);
+    const channel = vscode.window.createOutputChannel('ReviewMP - PR Review');
+    channel.clear();
+    channel.appendLine(
+      `PR Review — ${skippedFileComments.length} file(s) not available locally.\n` +
+      `Checkout the PR branch for inline comments.\n`
     );
-  }
-}
 
-// Minimal type for VS Code's git extension API (only what we use)
-interface GitAPI {
-  toGitUri(uri: vscode.Uri, ref: string): vscode.Uri;
+    for (const { file, comments: fileComments } of skippedFileComments) {
+      channel.appendLine(`── ${file} (${fileComments.length} comments) ──`);
+      for (const c of fileComments) {
+        const severity = c.severity || 'review';
+        channel.appendLine(`  L${c.line + 1} [${severity}]: ${c.message}`);
+        if (c.fix) {
+          channel.appendLine(`    Fix: ${c.fix}`);
+        }
+      }
+      channel.appendLine('');
+    }
+
+    channel.show(true);
+    return { placed, skipped: totalSkipped };
+  }
+
+  return { placed, skipped: 0 };
 }
 
 export function deactivate() {
