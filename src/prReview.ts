@@ -112,8 +112,7 @@ export class PRReviewService {
   }
 
   /**
-   * Parse a single hunk into newHunk (with line numbers) and oldHunk (context).
-   * Skips line number annotations for first 3 and last 3 context lines.
+   * Parse a single hunk into newHunk (with line numbers on every line) and oldHunk (context).
    */
   private parsePatch(patch: string): ParsedPatch | null {
     const range = this.patchStartEndLine(patch);
@@ -131,39 +130,18 @@ export class PRReviewService {
     let newLineNum = range.newHunk.startLine;
     let oldLineNum = range.oldHunk.startLine;
 
-    // Track context line indices for noise reduction
-    const contextIndices: number[] = [];
-    bodyLines.forEach((line, idx) => {
-      if (!line.startsWith('+') && !line.startsWith('-')) {
-        contextIndices.push(idx);
-      }
-    });
-
-    // First 3 and last 3 context lines should skip line number annotations
-    const skipAnnotation = new Set<number>();
-    for (let i = 0; i < Math.min(3, contextIndices.length); i++) {
-      skipAnnotation.add(contextIndices[i]);
-    }
-    for (let i = Math.max(0, contextIndices.length - 3); i < contextIndices.length; i++) {
-      skipAnnotation.add(contextIndices[i]);
-    }
-
-    bodyLines.forEach((line, idx) => {
+    bodyLines.forEach((line) => {
       if (line.startsWith('+')) {
-        // Added line — always include line number
-        newLines.push(`${newLineNum}: ${line.substring(1)}`);
+        // Added line
+        newLines.push(`${newLineNum}: +${line.substring(1)}`);
         newLineNum++;
       } else if (line.startsWith('-')) {
         // Removed line
         oldLines.push(line.substring(1));
         oldLineNum++;
       } else {
-        // Context line
-        if (skipAnnotation.has(idx)) {
-          newLines.push(line);
-        } else {
-          newLines.push(`${newLineNum}: ${line}`);
-        }
+        // Context line — always include line number
+        newLines.push(`${newLineNum}: ${line}`);
         oldLines.push(line);
         newLineNum++;
         oldLineNum++;
