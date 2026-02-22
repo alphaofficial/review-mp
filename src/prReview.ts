@@ -142,7 +142,11 @@ export class PRReviewService {
       }
     }
 
-    return { comments: allComments, isRemote };
+    // Step 7: Final dedup — merge comments on the same file+line
+    const dedupedComments = this.deduplicateComments(allComments);
+    console.log(`[ReviewMP-PR] Dedup: ${allComments.length} -> ${dedupedComments.length} comments`);
+
+    return { comments: dedupedComments, isRemote };
   }
 
   // ─── PR Detection ──────────────────────────────────────────────────
@@ -522,6 +526,10 @@ When reporting issues:
             .join('\n')
         : 'None yet.';
 
+    const coveredLocations = existingComments.length > 0
+      ? [...new Set(existingComments.map(c => `${c.file}:${c.line + 1}`))].join(', ')
+      : 'None';
+
     const compactDiff = fileChunks
       .map(chunk => {
         const lines = chunk.diff.split('\n');
@@ -549,10 +557,13 @@ ${fileSummaries}
 ${compactDiff}
 </diff-headers>
 
-## Already found (DO NOT duplicate)
+## Already covered locations (DO NOT comment on these file:line locations again)
+${coveredLocations}
+
+## Already found issues (DO NOT duplicate or rephrase these)
 ${existingSummary}
 
-Focus ONLY on:
+Focus ONLY on NEW cross-file issues at lines NOT already covered above:
 - Type/interface changed but consumers not updated
 - Function signatures changed but call sites use old signature
 - Imports referencing renamed/removed exports
@@ -763,6 +774,53 @@ Output as JSON array with: file, line, message, severity`;
       return severity;
     }
     return undefined;
+  }
+
+  // ─── Deduplication ──────────────────────────────────────────────────
+
+  private deduplicateComments(comments: ReviewComment[]): ReviewComment[] {
+    const severityRank: Record<string, number> = {
+      error: 4,
+      warning: 3,
+      suggestion: 2,
+      info: 1,
+    };
+
+    const groups = new Map<string, ReviewComment[]>();
+    for (const comment of comments) {
+      const key = `${comment.file}:${comment.line}`;
+      if (!groups.has(key)) {
+        groups.set(key, []);
+      }
+      groups.get(key)!.push(comment);
+    }
+
+    const result: ReviewComment[] = [];
+    for (const group of groups.values()) {
+      if (group.length === 1) {
+        result.push(group[0]);
+        continue;
+      }
+
+      // Merge: combine messages, keep highest severity, keep first fix
+      const mergedMessage = group.map(c => c.message).join('\n\n---\n\n');
+      const highestSeverity = group.reduce((best, c) => {
+        const bestRank = severityRank[best || 'info'] || 0;
+        const currentRank = severityRank[c.severity || 'info'] || 0;
+        return currentRank > bestRank ? c.severity : best;
+      }, group[0].severity);
+      const fix = group.find(c => c.fix)?.fix;
+
+      result.push({
+        file: group[0].file,
+        line: group[0].line,
+        message: mergedMessage,
+        severity: highestSeverity,
+        fix,
+      });
+    }
+
+    return result;
   }
 
   // ─── Utilities ─────────────────────────────────────────────────────
