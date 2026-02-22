@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { ReviewComment } from './comments';
 import * as path from 'path';
@@ -473,6 +474,23 @@ export class PRReviewService {
     return clusters;
   }
 
+  // ─── File Content Reading ────────────────────────────────────────────
+
+  /**
+   * Read a file from disk and return numbered lines (1-based).
+   * Returns null if the file can't be read (e.g. deleted).
+   */
+  private readNumberedFileContent(filePath: string, cwd: string): string | null {
+    try {
+      const fullPath = path.join(cwd, filePath);
+      const content = fs.readFileSync(fullPath, 'utf-8');
+      const lines = content.split('\n');
+      return lines.map((line, index) => `${index + 1}: ${line}`).join('\n');
+    } catch {
+      return null;
+    }
+  }
+
   // ─── Review Methods ────────────────────────────────────────────────
 
   private async reviewSingleDiff(
@@ -480,18 +498,33 @@ export class PRReviewService {
     prInfo: PRInfo,
     cancellationToken: vscode.CancellationToken
   ): Promise<ReviewComment[]> {
-    const formatted = this.formatDiffWithLineNumbers(diffOutput);
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+    const fileChunks = this.splitDiffByFile(diffOutput);
+
+    // Build numbered file contents for all changed files
+    const fileContents = fileChunks.map(chunk => {
+      const numbered = this.readNumberedFileContent(chunk.file, cwd);
+      if (numbered) {
+        return `=== ${chunk.file} ===\n${numbered}`;
+      }
+      return `=== ${chunk.file} (deleted/unreadable - diff only) ===\n${chunk.diff}`;
+    }).join('\n\n');
 
     const prompt = `Review the following changes from PR #${prInfo.number} "${prInfo.title}" (${prInfo.baseBranch} <- ${prInfo.headBranch}).
 
-The diff includes line numbers, context lines, added (+) and removed (-) lines.
+Below are the full file contents with line numbers, followed by the diff showing what changed.
+Use the line numbers from the file contents, NOT from the diff.
+
+<files>
+${fileContents}
+</files>
 
 <diff>
-${formatted}
+${diffOutput}
 </diff>
 
 When reporting issues:
-1. Use the line numbers shown in the diff
+1. Use the line numbers from the file contents above
 2. Include the file path for each comment
 3. Provide your review as a JSON array with required fields: file, line, message, severity
 4. Focus on bugs, logic errors, security issues, missing error handling, and breaking changes`;
@@ -504,18 +537,40 @@ When reporting issues:
     prInfo: PRInfo,
     cancellationToken: vscode.CancellationToken
   ): Promise<ReviewComment[]> {
-    const formatted = this.formatDiffWithLineNumbers(chunk.diff);
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+    const numbered = this.readNumberedFileContent(chunk.file, cwd);
 
-    const prompt = `Review changes to "${chunk.file}" from PR #${prInfo.number} "${prInfo.title}".
+    let prompt: string;
+    if (numbered) {
+      prompt = `Review changes to "${chunk.file}" from PR #${prInfo.number} "${prInfo.title}".
+
+Below is the full file with line numbers, followed by the diff showing what changed.
+Use the line numbers from the file content, NOT from the diff.
+
+<file path="${chunk.file}">
+${numbered}
+</file>
 
 <diff>
-${formatted}
+${chunk.diff}
 </diff>
 
 When reporting issues:
-1. Use the line numbers shown in the diff
+1. Use the line numbers from the file content above
 2. Set the file field to "${chunk.file}" for every comment
 3. Provide your review as a JSON array with required fields: file, line, message, severity`;
+    } else {
+      // Fallback for deleted/unreadable files
+      prompt = `Review changes to "${chunk.file}" from PR #${prInfo.number} "${prInfo.title}".
+
+<diff>
+${chunk.diff}
+</diff>
+
+When reporting issues:
+1. Set the file field to "${chunk.file}" for every comment
+2. Provide your review as a JSON array with required fields: file, line, message, severity`;
+    }
 
     return this.executeReview(prompt, cancellationToken);
   }
@@ -525,22 +580,37 @@ When reporting issues:
     prInfo: PRInfo,
     cancellationToken: vscode.CancellationToken
   ): Promise<ReviewComment[]> {
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
     const fileList = cluster.map(c => c.file).join(', ');
-    const combinedDiff = cluster
-      .map(c => this.formatDiffWithLineNumbers(c.diff))
-      .join('\n\n');
+
+    const fileContents = cluster.map(c => {
+      const numbered = this.readNumberedFileContent(c.file, cwd);
+      if (numbered) {
+        return `=== ${c.file} ===\n${numbered}`;
+      }
+      return `=== ${c.file} (deleted/unreadable) ===`;
+    }).join('\n\n');
+
+    const combinedDiff = cluster.map(c => c.diff).join('\n\n');
 
     const prompt = `Review the following related file changes from PR #${prInfo.number} "${prInfo.title}".
 
 These files import from each other — check for cross-file consistency.
 Files: ${fileList}
 
+Below are the full file contents with line numbers, followed by the diff showing what changed.
+Use the line numbers from the file contents, NOT from the diff.
+
+<files>
+${fileContents}
+</files>
+
 <diff>
 ${combinedDiff}
 </diff>
 
 When reporting issues:
-1. Use the line numbers shown in the diff
+1. Use the line numbers from the file contents above
 2. Include the correct file path for each comment
 3. Pay special attention to: type/interface changes vs consumer updates, renamed/removed exports, argument signature changes across call sites
 4. Provide your review as a JSON array with required fields: file, line, message, severity`;
