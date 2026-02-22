@@ -416,26 +416,14 @@ Rules:
       const dedupedComments = this.deduplicateComments(allComments);
       console.log(`[ReviewMP-PR] Dedup: ${allComments.length} -> ${dedupedComments.length} comments`);
 
-      return { comments: dedupedComments, isRemote };
-    } finally {
-      // Always restore original branch
       if (needsBranchSwitch) {
-        console.log(`[ReviewMP-PR] Restoring branch "${originalBranch}"...`);
-        try {
-          await this.execCommand(['git', 'checkout', originalBranch], cwd, cancellationToken);
-        } catch (e) {
-          console.error(`[ReviewMP-PR] Failed to restore branch "${originalBranch}":`, e);
-        }
+        console.log(`[ReviewMP-PR] Staying on branch "${prBranch}" for review. Switch back manually when done.`);
         if (didStash) {
-          console.log('[ReviewMP-PR] Restoring stashed changes...');
-          try {
-            await this.execCommand(['git', 'stash', 'pop'], cwd, cancellationToken);
-          } catch (e) {
-            console.error('[ReviewMP-PR] Failed to pop stash:', e);
-          }
+          console.log(`[ReviewMP-PR] Note: you have stashed changes on "${originalBranch}". Run "git checkout ${originalBranch} && git stash pop" to restore.`);
         }
       }
-    }
+
+      return { comments: dedupedComments, isRemote };
   }
 
   // ─── PR Detection ──────────────────────────────────────────────────
