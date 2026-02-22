@@ -350,80 +350,79 @@ Rules:
       console.log(`[ReviewMP-PR] Now on branch "${prBranch}"`);
     }
 
-    try {
-      const isRemote = false;
+    const isRemote = false;
 
-      console.log(`[ReviewMP-PR] Reviewing PR #${prInfo.number}: ${prInfo.title}`);
-      console.log(`[ReviewMP-PR] ${prInfo.baseBranch} <- ${prInfo.headBranch}`);
+    console.log(`[ReviewMP-PR] Reviewing PR #${prInfo.number}: ${prInfo.title}`);
+    console.log(`[ReviewMP-PR] ${prInfo.baseBranch} <- ${prInfo.headBranch}`);
 
-      // Step 2: Get the diff
-      const diffOutput = await this.execCommand(
-        ['git', 'diff', `${prInfo.baseBranch}...HEAD`, '-U8'],
-        cwd,
-        cancellationToken
+    // Step 2: Get the diff
+    const diffOutput = await this.execCommand(
+      ['git', 'diff', `${prInfo.baseBranch}...HEAD`, '-U8'],
+      cwd,
+      cancellationToken
+    );
+
+    if (!diffOutput.trim()) {
+      return { comments: [], isRemote };
+    }
+
+    // Step 3: Split by file
+    const fileChunks = this.splitDiffByFile(diffOutput);
+    const allFiles = fileChunks.map(c => c.file);
+    console.log(`[ReviewMP-PR] ${fileChunks.length} file(s) changed`);
+
+    // Step 4: For each file, split into hunks, parse, and review
+    const allComments: ReviewComment[] = [];
+    const concurrency = 4;
+
+    for (let i = 0; i < fileChunks.length; i += concurrency) {
+      if (cancellationToken.isCancellationRequested) {
+        break;
+      }
+
+      const batch = fileChunks.slice(i, i + concurrency);
+      const results = await Promise.allSettled(
+        batch.map(chunk => {
+          // Split into hunks, parse each
+          const rawHunks = this.splitPatch(chunk.diff);
+          const parsedPatches: ParsedPatch[] = [];
+          for (const hunk of rawHunks) {
+            const parsed = this.parsePatch(hunk);
+            if (parsed) {
+              parsedPatches.push(parsed);
+            }
+          }
+          return this.reviewFile(
+            chunk.file,
+            parsedPatches,
+            prInfo,
+            allFiles,
+            cancellationToken
+          );
+        })
       );
 
-      if (!diffOutput.trim()) {
-        return { comments: [], isRemote };
-      }
-
-      // Step 3: Split by file
-      const fileChunks = this.splitDiffByFile(diffOutput);
-      const allFiles = fileChunks.map(c => c.file);
-      console.log(`[ReviewMP-PR] ${fileChunks.length} file(s) changed`);
-
-      // Step 4: For each file, split into hunks, parse, and review
-      const allComments: ReviewComment[] = [];
-      const concurrency = 4;
-
-      for (let i = 0; i < fileChunks.length; i += concurrency) {
-        if (cancellationToken.isCancellationRequested) {
-          break;
-        }
-
-        const batch = fileChunks.slice(i, i + concurrency);
-        const results = await Promise.allSettled(
-          batch.map(chunk => {
-            // Split into hunks, parse each
-            const rawHunks = this.splitPatch(chunk.diff);
-            const parsedPatches: ParsedPatch[] = [];
-            for (const hunk of rawHunks) {
-              const parsed = this.parsePatch(hunk);
-              if (parsed) {
-                parsedPatches.push(parsed);
-              }
-            }
-            return this.reviewFile(
-              chunk.file,
-              parsedPatches,
-              prInfo,
-              allFiles,
-              cancellationToken
-            );
-          })
-        );
-
-        for (const result of results) {
-          if (result.status === 'fulfilled') {
-            allComments.push(...result.value);
-          } else {
-            console.log('[ReviewMP-PR] File review failed:', result.reason);
-          }
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          allComments.push(...result.value);
+        } else {
+          console.log('[ReviewMP-PR] File review failed:', result.reason);
         }
       }
+    }
 
-      // Step 5: Dedup nearby comments
-      const dedupedComments = this.deduplicateComments(allComments);
-      console.log(`[ReviewMP-PR] Dedup: ${allComments.length} -> ${dedupedComments.length} comments`);
+    // Step 5: Dedup nearby comments
+    const dedupedComments = this.deduplicateComments(allComments);
+    console.log(`[ReviewMP-PR] Dedup: ${allComments.length} -> ${dedupedComments.length} comments`);
 
-      if (needsBranchSwitch) {
-        console.log(`[ReviewMP-PR] Staying on branch "${prBranch}" for review. Switch back manually when done.`);
-        if (didStash) {
-          console.log(`[ReviewMP-PR] Note: you have stashed changes on "${originalBranch}". Run "git checkout ${originalBranch} && git stash pop" to restore.`);
-        }
+    if (needsBranchSwitch) {
+      console.log(`[ReviewMP-PR] Staying on branch "${prBranch}" for review. Switch back manually when done.`);
+      if (didStash) {
+        console.log(`[ReviewMP-PR] Note: you have stashed changes on "${originalBranch}". Run "git checkout ${originalBranch} && git stash pop" to restore.`);
       }
+    }
 
-      return { comments: dedupedComments, isRemote };
+    return { comments: dedupedComments, isRemote };
   }
 
   // ─── PR Detection ──────────────────────────────────────────────────
