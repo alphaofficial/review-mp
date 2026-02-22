@@ -1,8 +1,6 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { ReviewComment } from './comments';
-import * as path from 'path';
 
 interface FileChunk {
   file: string;
@@ -22,6 +20,24 @@ export interface PRReviewResult {
   isRemote: boolean;
 }
 
+interface HunkRange {
+  startLine: number;
+  endLine: number;
+}
+
+interface PatchLineRange {
+  oldHunk: HunkRange;
+  newHunk: HunkRange;
+}
+
+interface ParsedPatch {
+  oldHunk: string;
+  newHunk: string;
+  range: PatchLineRange;
+}
+
+const CHAR_BUDGET = 30_000;
+
 export class PRReviewService {
   private getOpenCodePath(): string {
     const config = vscode.workspace.getConfiguration('reviewmp');
@@ -37,6 +53,250 @@ export class PRReviewService {
     const model = config.get<string>('model');
     return model && model.trim() !== '' ? model : undefined;
   }
+
+  // ─── Patch Splitting & Parsing (CodeRabbit approach) ───────────────
+
+  /**
+   * Split a file's diff into individual hunk strings, each starting with `@@`.
+   */
+  private splitPatch(patch: string): string[] {
+    const hunks: string[] = [];
+    const lines = patch.split('\n');
+    let current: string[] = [];
+
+    for (const line of lines) {
+      if (line.startsWith('@@')) {
+        if (current.length > 0) {
+          hunks.push(current.join('\n'));
+        }
+        current = [line];
+      } else if (current.length > 0) {
+        current.push(line);
+      }
+      // skip lines before the first @@
+    }
+
+    if (current.length > 0) {
+      hunks.push(current.join('\n'));
+    }
+
+    return hunks;
+  }
+
+  /**
+   * Extract line number ranges from a hunk header `@@ -old,count +new,count @@`.
+   */
+  private patchStartEndLine(patch: string): PatchLineRange | null {
+    const headerMatch = patch.match(
+      /^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/
+    );
+    if (!headerMatch) {
+      return null;
+    }
+
+    const oldStart = parseInt(headerMatch[1], 10);
+    const oldCount = parseInt(headerMatch[2] ?? '1', 10);
+    const newStart = parseInt(headerMatch[3], 10);
+    const newCount = parseInt(headerMatch[4] ?? '1', 10);
+
+    return {
+      oldHunk: {
+        startLine: oldStart,
+        endLine: oldStart + Math.max(oldCount - 1, 0),
+      },
+      newHunk: {
+        startLine: newStart,
+        endLine: newStart + Math.max(newCount - 1, 0),
+      },
+    };
+  }
+
+  /**
+   * Parse a single hunk into newHunk (with line numbers) and oldHunk (context).
+   * Skips line number annotations for first 3 and last 3 context lines.
+   */
+  private parsePatch(patch: string): ParsedPatch | null {
+    const range = this.patchStartEndLine(patch);
+    if (!range) {
+      return null;
+    }
+
+    const lines = patch.split('\n');
+    // Skip the @@ header line
+    const bodyLines = lines.slice(1);
+
+    const newLines: string[] = [];
+    const oldLines: string[] = [];
+
+    let newLineNum = range.newHunk.startLine;
+    let oldLineNum = range.oldHunk.startLine;
+
+    // Track context line indices for noise reduction
+    const contextIndices: number[] = [];
+    bodyLines.forEach((line, idx) => {
+      if (!line.startsWith('+') && !line.startsWith('-')) {
+        contextIndices.push(idx);
+      }
+    });
+
+    // First 3 and last 3 context lines should skip line number annotations
+    const skipAnnotation = new Set<number>();
+    for (let i = 0; i < Math.min(3, contextIndices.length); i++) {
+      skipAnnotation.add(contextIndices[i]);
+    }
+    for (let i = Math.max(0, contextIndices.length - 3); i < contextIndices.length; i++) {
+      skipAnnotation.add(contextIndices[i]);
+    }
+
+    bodyLines.forEach((line, idx) => {
+      if (line.startsWith('+')) {
+        // Added line — always include line number
+        newLines.push(`${newLineNum}: ${line.substring(1)}`);
+        newLineNum++;
+      } else if (line.startsWith('-')) {
+        // Removed line
+        oldLines.push(line.substring(1));
+        oldLineNum++;
+      } else {
+        // Context line
+        if (skipAnnotation.has(idx)) {
+          newLines.push(line);
+        } else {
+          newLines.push(`${newLineNum}: ${line}`);
+        }
+        oldLines.push(line);
+        newLineNum++;
+        oldLineNum++;
+      }
+    });
+
+    return {
+      oldHunk: oldLines.join('\n'),
+      newHunk: newLines.join('\n'),
+      range,
+    };
+  }
+
+  // ─── File Review ───────────────────────────────────────────────────
+
+  /**
+   * Review a single file by packing its parsed hunks into a prompt.
+   */
+  private async reviewFile(
+    filename: string,
+    patches: ParsedPatch[],
+    prInfo: PRInfo,
+    allFiles: string[],
+    cancellationToken: vscode.CancellationToken
+  ): Promise<ReviewComment[]> {
+    if (patches.length === 0) {
+      return [];
+    }
+
+    const otherFiles = allFiles.filter(f => f !== filename);
+
+    // Build change sections, respecting char budget
+    let changeSections = '';
+    for (const patch of patches) {
+      const section = `---new_hunk---
+\`\`\`
+${patch.newHunk}
+\`\`\`
+---old_hunk---
+\`\`\`
+${patch.oldHunk}
+\`\`\`
+---end_change_section---
+`;
+      if (changeSections.length + section.length > CHAR_BUDGET) {
+        break;
+      }
+      changeSections += section + '\n';
+    }
+
+    const prompt = `Review the changes in "${filename}" from PR #${prInfo.number} "${prInfo.title}".
+Other files changed in this PR: ${otherFiles.join(', ')}
+
+Each change section has the new code (with line numbers) and the old code for context.
+
+<changes>
+${changeSections}
+</changes>
+
+Return your review as a JSON array. Each element must have these fields:
+- "file": always "${filename}"
+- "startLine": first line number of the issue (from new_hunk line numbers)
+- "endLine": last line number of the issue
+- "line": same as startLine
+- "message": description of the issue
+- "severity": one of "error", "warning", "info", "suggestion"
+- "fix": (optional) suggested replacement code
+
+Rules:
+- Use line numbers from the new_hunk sections only
+- Focus on bugs, logic errors, security issues, missing error handling
+- Do NOT comment on style, formatting, or minor naming issues
+- Do NOT flag missing files/components that may exist in other PR files
+- If the changes look good, respond with an empty array: []`;
+
+    const comments = await this.executeReview(prompt, cancellationToken);
+    return this.clampCommentLines(comments, patches);
+  }
+
+  // ─── Line Clamping ─────────────────────────────────────────────────
+
+  /**
+   * If a comment's line falls outside all hunk ranges, snap it to the nearest valid range.
+   */
+  private clampCommentLines(
+    comments: ReviewComment[],
+    patches: ParsedPatch[]
+  ): ReviewComment[] {
+    if (patches.length === 0) {
+      return comments;
+    }
+
+    return comments.map(comment => {
+      const line1 = comment.line + 1; // convert back to 1-based for comparison
+
+      // Check if line falls within any patch's new hunk range
+      const inRange = patches.some(
+        p => line1 >= p.range.newHunk.startLine && line1 <= p.range.newHunk.endLine
+      );
+
+      if (inRange) {
+        return comment;
+      }
+
+      // Find nearest patch
+      let bestPatch = patches[0];
+      let bestDist = Infinity;
+
+      for (const patch of patches) {
+        const distToStart = Math.abs(line1 - patch.range.newHunk.startLine);
+        const distToEnd = Math.abs(line1 - patch.range.newHunk.endLine);
+        const dist = Math.min(distToStart, distToEnd);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestPatch = patch;
+        }
+      }
+
+      // Clamp to the nearest patch range
+      const clamped = Math.max(
+        bestPatch.range.newHunk.startLine,
+        Math.min(line1, bestPatch.range.newHunk.endLine)
+      );
+
+      return {
+        ...comment,
+        line: clamped - 1, // back to 0-based
+        message: comment.message + `\n\n_(Line remapped from ${line1} to ${clamped} to match diff range)_`,
+      };
+    });
+  }
+
+  // ─── Main Entry Point ─────────────────────────────────────────────
 
   /**
    * Main entry point: review a PR by number or auto-detect from current branch.
@@ -91,16 +351,14 @@ export class PRReviewService {
     }
 
     try {
-      // After branch switch, files are local — isRemote is false
       const isRemote = false;
 
       console.log(`[ReviewMP-PR] Reviewing PR #${prInfo.number}: ${prInfo.title}`);
       console.log(`[ReviewMP-PR] ${prInfo.baseBranch} <- ${prInfo.headBranch}`);
 
-      // Step 2: Get the diff (always use HEAD since we're on the correct branch now)
-      const diffTarget = 'HEAD';
+      // Step 2: Get the diff
       const diffOutput = await this.execCommand(
-        ['git', 'diff', `${prInfo.baseBranch}...${diffTarget}`, '-U8'],
+        ['git', 'diff', `${prInfo.baseBranch}...HEAD`, '-U8'],
         cwd,
         cancellationToken
       );
@@ -111,64 +369,50 @@ export class PRReviewService {
 
       // Step 3: Split by file
       const fileChunks = this.splitDiffByFile(diffOutput);
+      const allFiles = fileChunks.map(c => c.file);
       console.log(`[ReviewMP-PR] ${fileChunks.length} file(s) changed`);
 
-      // Small PRs: single review (preserves full cross-file context naturally)
-      const totalLines = fileChunks.reduce((sum, c) => sum + c.diff.split('\n').length, 0);
-      if (fileChunks.length <= 3 && totalLines <= 500) {
-        const comments = await this.reviewSingleDiff(diffOutput, prInfo, cancellationToken);
-        return { comments, isRemote };
-      }
-
-      // Step 4: Build import graph and cluster related files
-      const importGraph = await this.buildImportGraphFromGit(fileChunks, cwd, diffTarget, cancellationToken);
-
-      const clusters = this.clusterByImports(fileChunks, importGraph);
-      console.log(`[ReviewMP-PR] Grouped into ${clusters.length} cluster(s): ${clusters.map(c => `[${c.map(f => f.file).join(', ')}]`).join(', ')}`);
-
-      // Step 5: Pass 1 — review each cluster
+      // Step 4: For each file, split into hunks, parse, and review
       const allComments: ReviewComment[] = [];
       const concurrency = 4;
 
-      for (let i = 0; i < clusters.length; i += concurrency) {
+      for (let i = 0; i < fileChunks.length; i += concurrency) {
         if (cancellationToken.isCancellationRequested) {
           break;
         }
 
-        const batch = clusters.slice(i, i + concurrency);
+        const batch = fileChunks.slice(i, i + concurrency);
         const results = await Promise.allSettled(
-          batch.map(cluster =>
-            cluster.length === 1
-              ? this.reviewFileChunk(cluster[0], prInfo, cancellationToken)
-              : this.reviewCluster(cluster, prInfo, cancellationToken)
-          )
+          batch.map(chunk => {
+            // Split into hunks, parse each
+            const rawHunks = this.splitPatch(chunk.diff);
+            const parsedPatches: ParsedPatch[] = [];
+            for (const hunk of rawHunks) {
+              const parsed = this.parsePatch(hunk);
+              if (parsed) {
+                parsedPatches.push(parsed);
+              }
+            }
+            return this.reviewFile(
+              chunk.file,
+              parsedPatches,
+              prInfo,
+              allFiles,
+              cancellationToken
+            );
+          })
         );
 
         for (const result of results) {
           if (result.status === 'fulfilled') {
             allComments.push(...result.value);
           } else {
-            console.log('[ReviewMP-PR] Cluster review failed:', result.reason);
+            console.log('[ReviewMP-PR] File review failed:', result.reason);
           }
         }
       }
 
-      // Step 6: Pass 2 — cross-file consistency review
-      if (clusters.length > 1 && !cancellationToken.isCancellationRequested) {
-        try {
-          const crossFileComments = await this.reviewCrossFile(
-            fileChunks,
-            allComments,
-            prInfo,
-            cancellationToken
-          );
-          allComments.push(...crossFileComments);
-        } catch (error) {
-          console.log('[ReviewMP-PR] Cross-file review failed (non-fatal):', error);
-        }
-      }
-
-      // Step 7: Final dedup — merge comments on the same file+line
+      // Step 5: Dedup nearby comments
       const dedupedComments = this.deduplicateComments(allComments);
       console.log(`[ReviewMP-PR] Dedup: ${allComments.length} -> ${dedupedComments.length} comments`);
 
@@ -312,434 +556,6 @@ export class PRReviewService {
     return chunks;
   }
 
-  // ─── Import Graph & Clustering ─────────────────────────────────────
-
-  /**
-   * Build import graph by reading file contents from git at the given ref.
-   * Works for both local and remote PRs since it uses `git show ref:path`
-   * rather than reading from disk.
-   */
-  private async buildImportGraphFromGit(
-    fileChunks: FileChunk[],
-    cwd: string,
-    headRef: string,
-    cancellationToken: vscode.CancellationToken
-  ): Promise<Map<string, Set<string>>> {
-    const graph = new Map<string, Set<string>>();
-    const changedFiles = new Set(fileChunks.map(c => c.file));
-
-    for (const chunk of fileChunks) {
-      if (cancellationToken.isCancellationRequested) {
-        break;
-      }
-
-      graph.set(chunk.file, new Set());
-
-      try {
-        const content = await this.execCommand(
-          ['git', 'show', `${headRef}:${chunk.file}`],
-          cwd,
-          cancellationToken
-        );
-        this.extractImports(chunk.file, content, changedFiles, graph);
-      } catch {
-        // File doesn't exist at this ref (e.g. deleted) — fall back to diff-based extraction
-        const lines = chunk.diff.split('\n');
-        const contentLines: string[] = [];
-        for (const line of lines) {
-          if (line.startsWith('+') && !line.startsWith('+++')) {
-            contentLines.push(line.substring(1));
-          } else if (line.startsWith(' ')) {
-            contentLines.push(line.substring(1));
-          }
-        }
-        this.extractImports(chunk.file, contentLines.join('\n'), changedFiles, graph);
-      }
-    }
-
-    return graph;
-  }
-
-  /**
-   * Extract import statements from file content and add edges to the graph.
-   */
-  private extractImports(
-    file: string,
-    content: string,
-    changedFiles: Set<string>,
-    graph: Map<string, Set<string>>
-  ): void {
-    const importPatterns = [
-      /from\s+['"]([^'"]+)['"]/g,
-      /import\s*\(['"]([^'"]+)['"]\)/g,
-      /require\s*\(['"]([^'"]+)['"]\)/g,
-    ];
-
-    for (const pattern of importPatterns) {
-      let match;
-      while ((match = pattern.exec(content)) !== null) {
-        const importPath = match[1];
-        if (importPath.startsWith('.')) {
-          const resolved = this.resolveImportPath(file, importPath, changedFiles);
-          if (resolved) {
-            graph.get(file)!.add(resolved);
-          }
-        }
-      }
-    }
-  }
-
-  private resolveImportPath(
-    fromFile: string,
-    importPath: string,
-    changedFiles: Set<string>
-  ): string | null {
-    const dir = path.dirname(fromFile);
-    const resolved = path.normalize(path.join(dir, importPath));
-
-    const candidates = [
-      resolved,
-      ...['ts', 'tsx', 'js', 'jsx'].map(ext => `${resolved}.${ext}`),
-      ...['ts', 'tsx', 'js', 'jsx'].map(ext => path.join(resolved, `index.${ext}`)),
-    ];
-
-    for (const candidate of candidates) {
-      if (changedFiles.has(candidate)) {
-        return candidate;
-      }
-    }
-
-    return null;
-  }
-
-  private clusterByImports(
-    fileChunks: FileChunk[],
-    importGraph: Map<string, Set<string>>
-  ): FileChunk[][] {
-    const fileMap = new Map(fileChunks.map(c => [c.file, c]));
-    const visited = new Set<string>();
-    const clusters: FileChunk[][] = [];
-
-    // Build bidirectional adjacency
-    const adjacency = new Map<string, Set<string>>();
-    for (const [file, imports] of importGraph) {
-      if (!adjacency.has(file)) {
-        adjacency.set(file, new Set());
-      }
-      for (const imp of imports) {
-        adjacency.get(file)!.add(imp);
-        if (!adjacency.has(imp)) {
-          adjacency.set(imp, new Set());
-        }
-        adjacency.get(imp)!.add(file);
-      }
-    }
-
-    // BFS connected components
-    for (const chunk of fileChunks) {
-      if (visited.has(chunk.file)) {
-        continue;
-      }
-
-      const cluster: FileChunk[] = [];
-      const queue = [chunk.file];
-      visited.add(chunk.file);
-
-      while (queue.length > 0) {
-        const current = queue.shift()!;
-        const fc = fileMap.get(current);
-        if (fc) {
-          cluster.push(fc);
-        }
-
-        const neighbors = adjacency.get(current) || new Set();
-        for (const neighbor of neighbors) {
-          if (!visited.has(neighbor) && fileMap.has(neighbor)) {
-            visited.add(neighbor);
-            queue.push(neighbor);
-          }
-        }
-      }
-
-      // Cap cluster size to stay within context limits
-      if (cluster.length > 10) {
-        for (let i = 0; i < cluster.length; i += 5) {
-          clusters.push(cluster.slice(i, i + 5));
-        }
-      } else {
-        clusters.push(cluster);
-      }
-    }
-
-    return clusters;
-  }
-
-  // ─── File Content Reading ────────────────────────────────────────────
-
-  /**
-   * Read a file from disk and return numbered lines (1-based).
-   * Returns null if the file can't be read (e.g. deleted).
-   */
-  private readNumberedFileContent(filePath: string, cwd: string): string | null {
-    try {
-      const fullPath = path.join(cwd, filePath);
-      const content = fs.readFileSync(fullPath, 'utf-8');
-      const lines = content.split('\n');
-      return lines.map((line, index) => `${index + 1}: ${line}`).join('\n');
-    } catch {
-      return null;
-    }
-  }
-
-  // ─── Review Methods ────────────────────────────────────────────────
-
-  private async reviewSingleDiff(
-    diffOutput: string,
-    prInfo: PRInfo,
-    cancellationToken: vscode.CancellationToken
-  ): Promise<ReviewComment[]> {
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
-    const fileChunks = this.splitDiffByFile(diffOutput);
-
-    // Build numbered file contents for all changed files
-    const fileContents = fileChunks.map(chunk => {
-      const numbered = this.readNumberedFileContent(chunk.file, cwd);
-      if (numbered) {
-        return `=== ${chunk.file} ===\n${numbered}`;
-      }
-      return `=== ${chunk.file} (deleted/unreadable - diff only) ===\n${chunk.diff}`;
-    }).join('\n\n');
-
-    const prompt = `Review the following changes from PR #${prInfo.number} "${prInfo.title}" (${prInfo.baseBranch} <- ${prInfo.headBranch}).
-
-Below are the full file contents with line numbers, followed by the diff showing what changed.
-Use the line numbers from the file contents, NOT from the diff.
-
-<files>
-${fileContents}
-</files>
-
-<diff>
-${diffOutput}
-</diff>
-
-When reporting issues:
-1. Use the line numbers from the file contents above
-2. Include the file path for each comment
-3. Provide your review as a JSON array with required fields: file, line, message, severity
-4. Focus on bugs, logic errors, security issues, missing error handling, and breaking changes`;
-
-    return this.executeReview(prompt, cancellationToken);
-  }
-
-  private async reviewFileChunk(
-    chunk: FileChunk,
-    prInfo: PRInfo,
-    cancellationToken: vscode.CancellationToken
-  ): Promise<ReviewComment[]> {
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
-    const numbered = this.readNumberedFileContent(chunk.file, cwd);
-
-    let prompt: string;
-    if (numbered) {
-      prompt = `Review changes to "${chunk.file}" from PR #${prInfo.number} "${prInfo.title}".
-
-Below is the full file with line numbers, followed by the diff showing what changed.
-Use the line numbers from the file content, NOT from the diff.
-
-<file path="${chunk.file}">
-${numbered}
-</file>
-
-<diff>
-${chunk.diff}
-</diff>
-
-When reporting issues:
-1. Use the line numbers from the file content above
-2. Set the file field to "${chunk.file}" for every comment
-3. Provide your review as a JSON array with required fields: file, line, message, severity`;
-    } else {
-      // Fallback for deleted/unreadable files
-      prompt = `Review changes to "${chunk.file}" from PR #${prInfo.number} "${prInfo.title}".
-
-<diff>
-${chunk.diff}
-</diff>
-
-When reporting issues:
-1. Set the file field to "${chunk.file}" for every comment
-2. Provide your review as a JSON array with required fields: file, line, message, severity`;
-    }
-
-    return this.executeReview(prompt, cancellationToken);
-  }
-
-  private async reviewCluster(
-    cluster: FileChunk[],
-    prInfo: PRInfo,
-    cancellationToken: vscode.CancellationToken
-  ): Promise<ReviewComment[]> {
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
-    const fileList = cluster.map(c => c.file).join(', ');
-
-    const fileContents = cluster.map(c => {
-      const numbered = this.readNumberedFileContent(c.file, cwd);
-      if (numbered) {
-        return `=== ${c.file} ===\n${numbered}`;
-      }
-      return `=== ${c.file} (deleted/unreadable) ===`;
-    }).join('\n\n');
-
-    const combinedDiff = cluster.map(c => c.diff).join('\n\n');
-
-    const prompt = `Review the following related file changes from PR #${prInfo.number} "${prInfo.title}".
-
-These files import from each other — check for cross-file consistency.
-Files: ${fileList}
-
-Below are the full file contents with line numbers, followed by the diff showing what changed.
-Use the line numbers from the file contents, NOT from the diff.
-
-<files>
-${fileContents}
-</files>
-
-<diff>
-${combinedDiff}
-</diff>
-
-When reporting issues:
-1. Use the line numbers from the file contents above
-2. Include the correct file path for each comment
-3. Pay special attention to: type/interface changes vs consumer updates, renamed/removed exports, argument signature changes across call sites
-4. Provide your review as a JSON array with required fields: file, line, message, severity`;
-
-    return this.executeReview(prompt, cancellationToken);
-  }
-
-  private async reviewCrossFile(
-    fileChunks: FileChunk[],
-    existingComments: ReviewComment[],
-    prInfo: PRInfo,
-    cancellationToken: vscode.CancellationToken
-  ): Promise<ReviewComment[]> {
-    const fileSummaries = fileChunks
-      .map(chunk => {
-        const lines = chunk.diff.split('\n');
-        const added = lines.filter(l => l.startsWith('+') && !l.startsWith('+++')).length;
-        const removed = lines.filter(l => l.startsWith('-') && !l.startsWith('---')).length;
-        return `- ${chunk.file} (+${added}/-${removed})`;
-      })
-      .join('\n');
-
-    const existingSummary =
-      existingComments.length > 0
-        ? existingComments
-            .map(c => `- ${c.file}:${c.line + 1} [${c.severity}] ${c.message}`)
-            .join('\n')
-        : 'None yet.';
-
-    const coveredLocations = existingComments.length > 0
-      ? [...new Set(existingComments.map(c => `${c.file}:${c.line + 1}`))].join(', ')
-      : 'None';
-
-    const compactDiff = fileChunks
-      .map(chunk => {
-        const lines = chunk.diff.split('\n');
-        return lines
-          .filter(
-            l =>
-              l.startsWith('diff --git') ||
-              l.startsWith('---') ||
-              l.startsWith('+++') ||
-              l.startsWith('@@')
-          )
-          .join('\n');
-      })
-      .join('\n\n');
-
-    const prompt = `Cross-file consistency review for PR #${prInfo.number} "${prInfo.title}".
-
-Individual file reviews are done. Find issues that ONLY appear across file boundaries.
-
-## Changed files
-${fileSummaries}
-
-## Diff structure
-<diff-headers>
-${compactDiff}
-</diff-headers>
-
-## Already covered locations (DO NOT comment on these file:line locations again)
-${coveredLocations}
-
-## Already found issues (DO NOT duplicate or rephrase these)
-${existingSummary}
-
-Focus ONLY on NEW cross-file issues at lines NOT already covered above:
-- Type/interface changed but consumers not updated
-- Function signatures changed but call sites use old signature
-- Imports referencing renamed/removed exports
-- Missing coordinated changes (API + client, schema + handler, etc.)
-
-If no cross-file issues: []
-Output as JSON array with: file, line, message, severity`;
-
-    return this.executeReview(prompt, cancellationToken);
-  }
-
-  // ─── Diff Formatting ───────────────────────────────────────────────
-
-  private formatDiffWithLineNumbers(diffOutput: string): string {
-    const lines = diffOutput.split('\n');
-    const formattedLines: string[] = [];
-    let currentLineNum = 0;
-    let inHunk = false;
-
-    for (const line of lines) {
-      if (line.startsWith('diff --git')) {
-        formattedLines.push(line);
-        inHunk = false;
-        continue;
-      }
-
-      if (line.startsWith('---') || line.startsWith('+++')) {
-        formattedLines.push(line);
-        continue;
-      }
-
-      if (line.startsWith('@@')) {
-        formattedLines.push(line);
-        inHunk = true;
-        const match = line.match(/\+(\d+)/);
-        if (match) {
-          currentLineNum = parseInt(match[1], 10) - 1;
-        }
-        continue;
-      }
-
-      if (!inHunk) {
-        formattedLines.push(line);
-        continue;
-      }
-
-      if (line.startsWith('+') && !line.startsWith('+++')) {
-        currentLineNum++;
-        formattedLines.push(`${currentLineNum}: + ${line.substring(1)}`);
-      } else if (line.startsWith('-') && !line.startsWith('---')) {
-        formattedLines.push(`   : - ${line.substring(1)}`);
-      } else if (line.startsWith(' ')) {
-        currentLineNum++;
-        formattedLines.push(`${currentLineNum}:   ${line.substring(1)}`);
-      } else {
-        formattedLines.push(line);
-      }
-    }
-
-    return formattedLines.join('\n');
-  }
-
   // ─── OpenCode Execution ────────────────────────────────────────────
 
   private executeReview(
@@ -863,13 +679,14 @@ Output as JSON array with: file, line, message, severity`;
         (item): item is Record<string, unknown> =>
           typeof item === 'object' &&
           item !== null &&
-          typeof (item as Record<string, unknown>).line === 'number' &&
           typeof (item as Record<string, unknown>).message === 'string' &&
-          typeof (item as Record<string, unknown>).file === 'string'
+          typeof (item as Record<string, unknown>).file === 'string' &&
+          (typeof (item as Record<string, unknown>).line === 'number' ||
+           typeof (item as Record<string, unknown>).startLine === 'number')
       )
       .map(item => ({
         file: item.file as string,
-        line: (item.line as number) - 1,
+        line: ((item.startLine as number | undefined) ?? (item.line as number)) - 1,
         message: item.message as string,
         fix: typeof item.fix === 'string' ? item.fix : undefined,
         severity: this.validateSeverity(item.severity),
@@ -900,38 +717,42 @@ Output as JSON array with: file, line, message, severity`;
       info: 1,
     };
 
-    const groups = new Map<string, ReviewComment[]>();
+    // Group by file
+    const byFile = new Map<string, ReviewComment[]>();
     for (const comment of comments) {
-      const key = `${comment.file}:${comment.line}`;
-      if (!groups.has(key)) {
-        groups.set(key, []);
+      if (!byFile.has(comment.file)) {
+        byFile.set(comment.file, []);
       }
-      groups.get(key)!.push(comment);
+      byFile.get(comment.file)!.push(comment);
     }
 
     const result: ReviewComment[] = [];
-    for (const group of groups.values()) {
-      if (group.length === 1) {
-        result.push(group[0]);
-        continue;
+
+    for (const fileComments of byFile.values()) {
+      fileComments.sort((a, b) => a.line - b.line);
+
+      const merged: ReviewComment[] = [];
+      for (const comment of fileComments) {
+        const nearby = merged.find(
+          m => Math.abs(m.line - comment.line) <= 3
+        );
+
+        if (nearby) {
+          nearby.message = `${nearby.message}\n\n---\n\n${comment.message}`;
+          const nearbyRank = severityRank[nearby.severity || 'info'] || 0;
+          const commentRank = severityRank[comment.severity || 'info'] || 0;
+          if (commentRank > nearbyRank) {
+            nearby.severity = comment.severity;
+          }
+          if (!nearby.fix && comment.fix) {
+            nearby.fix = comment.fix;
+          }
+        } else {
+          merged.push({ ...comment });
+        }
       }
 
-      // Merge: combine messages, keep highest severity, keep first fix
-      const mergedMessage = group.map(c => c.message).join('\n\n---\n\n');
-      const highestSeverity = group.reduce((best, c) => {
-        const bestRank = severityRank[best || 'info'] || 0;
-        const currentRank = severityRank[c.severity || 'info'] || 0;
-        return currentRank > bestRank ? c.severity : best;
-      }, group[0].severity);
-      const fix = group.find(c => c.fix)?.fix;
-
-      result.push({
-        file: group[0].file,
-        line: group[0].line,
-        message: mergedMessage,
-        severity: highestSeverity,
-        fix,
-      });
+      result.push(...merged);
     }
 
     return result;
