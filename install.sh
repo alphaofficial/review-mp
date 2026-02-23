@@ -48,6 +48,8 @@ OPENCODE_AGENTS_DIR="$HOME/.config/opencode/agent"
 mkdir -p "$OPENCODE_AGENTS_DIR"
 cp opencode-agent/reviewmp.md "$OPENCODE_AGENTS_DIR/"
 echo "Agent installed to $OPENCODE_AGENTS_DIR/reviewmp.md"
+cp opencode-agent/reviewmp-pr.md "$OPENCODE_AGENTS_DIR/"
+echo "Agent installed to $OPENCODE_AGENTS_DIR/reviewmp-pr.md"
 
 # Step 5: Install in VS Code
 echo ""

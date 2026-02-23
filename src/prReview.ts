@@ -531,7 +531,7 @@ Rules:
       const model = this.getModel();
       const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
-      const args = ['run', '--agent', 'reviewmp', '--format', 'json'];
+      const args = ['run', '--agent', 'reviewmp-pr', '--format', 'json'];
       if (model) {
         args.push('--model', model);
       }
