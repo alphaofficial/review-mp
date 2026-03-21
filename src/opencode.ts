@@ -10,6 +10,8 @@ interface SpawnResult {
 
 type CommentValidator = (data: unknown) => ReviewComment[];
 
+export type ReviewAgent = 'reviewmp' | 'reviewmp-design';
+
 export class OpenCodeService {
   private resolvedOpenCodePath: string | undefined;
 
@@ -109,13 +111,14 @@ export class OpenCodeService {
   }
 
   /**
-   * Run opencode with the reviewmp agent and return stdout.
+   * Run opencode with the specified agent and return stdout.
    */
   private async runOpenCodeAgent(
     prompt: string,
-    cancellationToken: vscode.CancellationToken
+    cancellationToken: vscode.CancellationToken,
+    agent: ReviewAgent = 'reviewmp'
   ): Promise<string> {
-    const args = ['run', '--agent', 'reviewmp', '--format', 'json'];
+    const args = ['run', '--agent', agent, '--format', 'json'];
     const model = this.getModel();
     if (model) {
       args.push('--model', model);
@@ -301,10 +304,11 @@ export class OpenCodeService {
     code: string,
     languageId: string,
     filePath: string,
-    cancellationToken: vscode.CancellationToken
+    cancellationToken: vscode.CancellationToken,
+    agent: ReviewAgent = 'reviewmp'
   ): Promise<ReviewComment[]> {
     const prompt = this.buildReviewPrompt(code, languageId, filePath);
-    const output = await this.runOpenCodeAgent(prompt, cancellationToken);
+    const output = await this.runOpenCodeAgent(prompt, cancellationToken, agent);
     const { comments, parseError } = this.parseNDJSON(
       output,
       (data) => this.validateFileComments(data, filePath)
@@ -337,7 +341,8 @@ Provide your review as a JSON array of comments. Understand the entire code befo
 
   async reviewDiff(
     type: 'staged' | 'uncommitted' | 'lastCommit' | 'branch',
-    cancellationToken: vscode.CancellationToken
+    cancellationToken: vscode.CancellationToken,
+    agent: ReviewAgent = 'reviewmp'
   ): Promise<ReviewComment[]> {
     let gitArgs: string[];
 
@@ -368,7 +373,7 @@ When reporting issues:
 3. Provide your review as a JSON array with required fields: file, line, message, severity
 4. Ensure you understand the changes before reviewing`;
 
-    const output = await this.runOpenCodeAgent(prompt, cancellationToken);
+    const output = await this.runOpenCodeAgent(prompt, cancellationToken, agent);
     const { comments, parseError } = this.parseNDJSON(
       output,
       (data) => this.validateDiffComments(data)

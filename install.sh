@@ -47,7 +47,8 @@ echo "Step 4: Installing reviewmp agent to opencode config..."
 OPENCODE_AGENTS_DIR="$HOME/.config/opencode/agent"
 mkdir -p "$OPENCODE_AGENTS_DIR"
 cp opencode-agent/reviewmp.md "$OPENCODE_AGENTS_DIR/"
-echo "Agent installed to $OPENCODE_AGENTS_DIR/reviewmp.md"
+cp opencode-agent/reviewmp-design.md "$OPENCODE_AGENTS_DIR/"
+echo "Agents installed to $OPENCODE_AGENTS_DIR/"
 
 # Step 5: Install in VS Code
 echo ""

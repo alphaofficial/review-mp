@@ -158,25 +158,31 @@ async function reviewCode(
     },
     async (progress, token) => {
       try {
-        const comments = await opencodeService.reviewCode(code, languageId, uri.fsPath, token);
+        // Run both reviewers in parallel
+        const [codeComments, designComments] = await Promise.all([
+          opencodeService.reviewCode(code, languageId, uri.fsPath, token, 'reviewmp'),
+          opencodeService.reviewCode(code, languageId, uri.fsPath, token, 'reviewmp-design'),
+        ]);
 
         if (token.isCancellationRequested) {
           return;
         }
 
-        if (comments.length === 0) {
+        const allComments = [...codeComments, ...designComments];
+
+        if (allComments.length === 0) {
           vscode.window.showInformationMessage('No issues found in the code');
           return;
         }
 
-        const adjustedComments = comments.map((c) => ({
+        const adjustedComments = allComments.map((c) => ({
           ...c,
           line: c.line + startLine,
         }));
 
         commentController.addComments(uri, adjustedComments, languageId);
         vscode.window.showInformationMessage(
-          `ReviewMP: Found ${comments.length} comment(s)`
+          `ReviewMP: Found ${allComments.length} comment(s)`
         );
       } catch (error) {
         if (error instanceof Error) {
@@ -203,21 +209,27 @@ async function reviewGitChanges(type: 'staged' | 'uncommitted' | 'lastCommit' | 
     },
     async (progress, token) => {
       try {
-        const comments = await opencodeService.reviewDiff(type, token);
+        // Run both reviewers in parallel
+        const [codeComments, designComments] = await Promise.all([
+          opencodeService.reviewDiff(type, token, 'reviewmp'),
+          opencodeService.reviewDiff(type, token, 'reviewmp-design'),
+        ]);
 
         if (token.isCancellationRequested) {
           return;
         }
 
-        if (comments.length === 0) {
+        const allComments = [...codeComments, ...designComments];
+
+        if (allComments.length === 0) {
           vscode.window.showInformationMessage('No issues found in the changes');
           return;
         }
 
-        await addDiffComments(comments);
+        await addDiffComments(allComments);
 
         vscode.window.showInformationMessage(
-          `ReviewMP: Found ${comments.length} comment(s) in ${labels[type]}`
+          `ReviewMP: Found ${allComments.length} comment(s) in ${labels[type]}`
         );
       } catch (error) {
         if (error instanceof Error) {
