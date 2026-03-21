@@ -11,7 +11,7 @@ A VS Code extension that reviews code using [OpenCode](https://github.com/nichoc
 The VS Code extension activation point. Registers all commands and wires services together.
 
 **Key responsibilities:**
-- Creates `OpenCodeService`, `PRReviewService`, and `ReviewCommentController`
+- Creates `OpenCodeService`, and `ReviewCommentController`
 - Optionally creates a `GitWatcher` if auto-review settings are enabled
 - Registers 8 commands: `reviewFile`, `reviewSelection`, `reviewStaged`, `reviewUncommitted`, `reviewLastCommit`, `reviewBranch`, `reviewPR`, `clearComments`
 - Contains helper functions (`reviewDocument`, `reviewCode`, `reviewGitChanges`, `addDiffComments`, `placePRComments`) that orchestrate between services and the comment controller
@@ -27,18 +27,6 @@ Handles spawning the `opencode` CLI and parsing its JSON output for single-file 
 - `applyFix(filePath, line, fix)` — Applies a suggested fix by sending a prompt to OpenCode (without `--agent reviewmp`)
 - `detectBaseBranch(token)` — Tries main → origin/main → master → origin/master → symbolic-ref → user prompt
 - Output parsing: Reads NDJSON stream, collects `type: "text"` events, extracts JSON array via regex, validates with `validateComments`/`validateDiffComments`
-
-### `src/prReview.ts` — PR Review Service (2-Pass Clustered Review)
-
-The most complex module. Handles full PR reviews with import-graph-based clustering and cross-file consistency checks.
-
-**Key responsibilities:**
-- `reviewPR(prNumber?, token)` — Main entry point. Resolves PR info (via `gh` CLI or auto-detect), gets the diff, splits by file, clusters by imports, runs pass 1 (per-cluster reviews in parallel), then pass 2 (cross-file consistency)
-- Import graph construction from disk (`buildImportGraphFromDisk`) or from diff content (`buildImportGraphFromDiff`)
-- BFS-based clustering (`clusterByImports`) — groups files that import each other, caps clusters at 10 files
-- Three review strategies: `reviewSingleDiff` (small PRs ≤3 files, ≤500 lines), `reviewFileChunk` (single file), `reviewCluster` (related files together)
-- `reviewCrossFile` — Pass 2: sends only diff headers + existing comments, asks for cross-boundary issues only
-- Supports remote PR review (files not checked out locally) — detects if current branch ≠ PR branch
 
 ### `src/comments.ts` — VS Code Comment Controller
 
@@ -91,29 +79,6 @@ User triggers command
       → groups by file → comments.ts: addComments() per file
 ```
 
-### PR Review (2-Pass Clustered)
-```
-User triggers reviewPR command
-  → extension.ts: reviewPR handler
-    → prReview.ts: reviewPR(prNumber?)
-      1. Resolve PR info (gh pr view or auto-detect)
-      2. Get diff: git diff base...head -U8
-      3. Split diff by file → FileChunk[]
-      4. Small PR? (≤3 files, ≤500 lines) → single review, done
-      5. Build import graph (disk or diff-based)
-      6. Cluster files by import connectivity (BFS)
-      7. PASS 1: Review clusters in parallel (concurrency=4)
-         - Single-file clusters → reviewFileChunk()
-         - Multi-file clusters → reviewCluster()
-      8. PASS 2: Cross-file consistency review
-         - Sends file summaries + diff headers + existing comments
-         - Asks for cross-boundary issues only
-      9. Return all comments
-    → extension.ts: placePRComments()
-      → local files → inline comments
-      → missing files → Output channel
-```
-
 ### Fix Application
 ```
 User clicks "Accept Fix" on a comment
@@ -149,32 +114,6 @@ This 2-pass design balances thoroughness with token efficiency — detailed revi
 
 ---
 
-## Dependency Diagram
-
-```
-┌─────────────────────────────────────────────────┐
-│                  extension.ts                    │
-│  (activation, commands, orchestration)           │
-├──────────┬──────────┬──────────┬────────────────┤
-│          │          │          │                  │
-│          ▼          ▼          ▼                  │
-│   ┌────────────┐ ┌──────────┐ ┌──────────────┐  │
-│   │ opencode.ts│ │prReview.ts│ │gitWatcher.ts │  │
-│   │            │ │           │ │              │  │
-│   │ File/diff  │ │ PR review │ │ Auto-review  │  │
-│   │ review +   │ │ 2-pass    │ │ on stage/    │  │
-│   │ fix apply  │ │ clustered │ │ commit       │  │
-│   └─────┬──────┘ └─────┬─────┘ └──────┬───────┘  │
-│         │              │               │          │
-│         ▼              │               │          │
-│   ┌────────────┐       │               │          │
-│   │comments.ts │◄──────┘               │          │
-│   │            │                       │          │
-│   │ VS Code    │  extension.ts calls   │          │
-│   │ Comment UI │  gitWatcher callbacks │          │
-│   └────────────┘  which call opencode ◄┘          │
-└─────────────────────────────────────────────────┘
-
 External dependencies:
   • opencode CLI  — LLM inference (spawned as child process)
   • git CLI       — diff generation, branch detection
@@ -188,13 +127,9 @@ External dependencies:
 extension.ts
   ├── imports comments.ts    (ReviewCommentController, ReviewComment)
   ├── imports opencode.ts    (OpenCodeService)
-  ├── imports prReview.ts    (PRReviewService)
   └── imports gitWatcher.ts  (GitWatcher)
 
 opencode.ts
-  └── imports comments.ts    (ReviewComment type)
-
-prReview.ts
   └── imports comments.ts    (ReviewComment type)
 
 comments.ts
@@ -213,23 +148,6 @@ ReviewComment {           // Defined in comments.ts, used everywhere
   message: string
   fix?: string
   severity?: 'error' | 'warning' | 'info' | 'suggestion'
-}
-
-FileChunk {               // Internal to prReview.ts
-  file: string
-  diff: string
-}
-
-PRInfo {                  // Internal to prReview.ts
-  number: number
-  baseBranch: string
-  headBranch: string
-  title: string
-}
-
-PRReviewResult {          // Exported from prReview.ts
-  comments: ReviewComment[]
-  isRemote: boolean
 }
 ```
 
