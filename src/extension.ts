@@ -3,6 +3,29 @@ import { ReviewCommentController, ReviewComment } from './comments';
 import { OpenCodeService } from './opencode';
 import { GitWatcher } from './gitWatcher';
 
+const EXT_TO_LANGUAGE: Record<string, string> = {
+  ts: 'typescript',
+  tsx: 'typescriptreact',
+  js: 'javascript',
+  jsx: 'javascriptreact',
+  py: 'python',
+  go: 'go',
+  rs: 'rust',
+  java: 'java',
+  rb: 'ruby',
+  php: 'php',
+  cs: 'csharp',
+  cpp: 'cpp',
+  c: 'c',
+  swift: 'swift',
+  kt: 'kotlin',
+};
+
+function languageIdFromPath(filePath: string): string {
+  const ext = filePath.split('.').pop() || '';
+  return EXT_TO_LANGUAGE[ext] || ext;
+}
+
 let commentController: ReviewCommentController;
 let opencodeService: OpenCodeService;
 let gitWatcher: GitWatcher | undefined;
@@ -222,29 +245,7 @@ async function addDiffComments(comments: ReviewComment[]) {
   // Add comments to each file
   for (const [filePath, fileComments] of commentsByFile) {
     const uri = vscode.Uri.joinPath(workspaceFolder.uri, filePath);
-
-    // Try to determine language from file extension
-    const ext = filePath.split('.').pop() || '';
-    const languageMap: Record<string, string> = {
-      ts: 'typescript',
-      tsx: 'typescriptreact',
-      js: 'javascript',
-      jsx: 'javascriptreact',
-      py: 'python',
-      go: 'go',
-      rs: 'rust',
-      java: 'java',
-      rb: 'ruby',
-      php: 'php',
-      cs: 'csharp',
-      cpp: 'cpp',
-      c: 'c',
-      swift: 'swift',
-      kt: 'kotlin',
-    };
-    const languageId = languageMap[ext] || ext;
-
-    commentController.addComments(uri, fileComments, languageId);
+    commentController.addComments(uri, fileComments, languageIdFromPath(filePath));
   }
 }
 
@@ -261,8 +262,6 @@ async function placePRComments(
     return { placed: 0, skipped: 0 };
   }
 
-  const fs = await import('fs');
-
   const commentsByFile = new Map<string, ReviewComment[]>();
   for (const comment of comments) {
     const existing = commentsByFile.get(comment.file) || [];
@@ -270,23 +269,12 @@ async function placePRComments(
     commentsByFile.set(comment.file, existing);
   }
 
-  const ext2lang: Record<string, string> = {
-    ts: 'typescript', tsx: 'typescriptreact',
-    js: 'javascript', jsx: 'javascriptreact',
-    py: 'python', go: 'go', rs: 'rust', java: 'java',
-    rb: 'ruby', php: 'php', cs: 'csharp', cpp: 'cpp',
-    c: 'c', swift: 'swift', kt: 'kotlin',
-  };
-
   let placed = 0;
   const skippedFileComments: Array<{ file: string; comments: ReviewComment[] }> = [];
 
   for (const [filePath, fileComments] of commentsByFile) {
     const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, filePath);
-    const ext = filePath.split('.').pop() || '';
-    const languageId = ext2lang[ext] || ext;
-
-    commentController.addComments(fileUri, fileComments, languageId);
+    commentController.addComments(fileUri, fileComments, languageIdFromPath(filePath));
     placed += fileComments.length;
   }
 
