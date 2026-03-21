@@ -1,23 +1,45 @@
 import * as vscode from 'vscode';
 import { spawn } from 'child_process';
+import { existsSync } from 'fs';
 import { ReviewComment } from './comments';
 
+interface SpawnResult {
+  stdout: string;
+  stderr: string;
+}
 
+type CommentValidator = (data: unknown) => ReviewComment[];
 
 export class OpenCodeService {
+  private resolvedOpenCodePath: string | undefined;
+
   private getOpenCodePath(): string {
+    if (this.resolvedOpenCodePath) {
+      return this.resolvedOpenCodePath;
+    }
+
     const config = vscode.workspace.getConfiguration('reviewmp');
     const configured = config.get<string>('opencodePath');
     if (configured && configured !== 'opencode') {
+      this.resolvedOpenCodePath = configured;
       return configured;
     }
-    // Default paths for opencode binary
-    const defaultPaths = [
+
+    const candidates = [
       '/opt/homebrew/bin/opencode',  // macOS ARM
       '/usr/local/bin/opencode',      // macOS Intel / Linux
-      'opencode',                      // fallback to PATH
     ];
-    return defaultPaths[0]; // Use homebrew path as default for now
+
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) {
+        this.resolvedOpenCodePath = candidate;
+        return candidate;
+      }
+    }
+
+    // Fallback to PATH lookup
+    this.resolvedOpenCodePath = 'opencode';
+    return 'opencode';
   }
 
   private getModel(): string | undefined {
@@ -26,152 +48,193 @@ export class OpenCodeService {
     return model && model.trim() !== '' ? model : undefined;
   }
 
-  async reviewCode(
-    code: string,
-    languageId: string,
-    filePath: string,
-    cancellationToken: vscode.CancellationToken
-  ): Promise<ReviewComment[]> {
-    const prompt = this.buildReviewPrompt(code, languageId, filePath);
+  private getCwd(): string | undefined {
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  }
 
+  /**
+   * Spawn a process and collect stdout/stderr. Handles cancellation and cleanup.
+   */
+  private spawnProcess(
+    command: string,
+    args: string[],
+    cancellationToken?: vscode.CancellationToken
+  ): Promise<SpawnResult> {
     return new Promise((resolve, reject) => {
-      const opencodePath = this.getOpenCodePath();
-      const model = this.getModel();
-      const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-
-      const args = ['run', '--agent', 'reviewmp', '--format', 'json'];
-      if (model) {
-        args.push('--model', model);
-      }
-      args.push(prompt);
-
-      console.log('[ReviewMP] OpenCode path:', opencodePath);
-      console.log('[ReviewMP] Prompt length:', prompt.length);
-      console.log('[ReviewMP] CWD:', cwd);
-
-      // No shell - spawn directly
-      // IMPORTANT: ignore stdin, otherwise opencode hangs waiting for input
-      const proc = spawn(opencodePath, args, {
-        cwd,
+      const proc = spawn(command, args, {
+        cwd: this.getCwd(),
         env: process.env,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
-      console.log('[ReviewMP] Process spawned, PID:', proc.pid);
-
       let stdout = '';
       let stderr = '';
+      let settled = false;
+
+      const settle = (fn: () => void) => {
+        if (!settled) {
+          settled = true;
+          cancelDisposable?.dispose();
+          fn();
+        }
+      };
 
       proc.stdout.on('data', (data) => {
-        const chunk = data.toString();
-        console.log('[ReviewMP] stdout:', chunk.substring(0, 300));
-        stdout += chunk;
+        stdout += data.toString();
       });
 
       proc.stderr.on('data', (data) => {
-        const chunk = data.toString();
-        console.log('[ReviewMP] stderr:', chunk.substring(0, 300));
-        stderr += chunk;
+        stderr += data.toString();
       });
 
-      cancellationToken.onCancellationRequested(() => {
-        console.log('[ReviewMP] Cancelled by user');
+      const cancelDisposable = cancellationToken?.onCancellationRequested(() => {
         proc.kill();
-        reject(new Error('Review cancelled'));
+        settle(() => reject(new Error('Cancelled')));
       });
 
-      proc.on('close', (code, signal) => {
-        console.log('[ReviewMP] Process closed - code:', code, 'signal:', signal);
-        console.log('[ReviewMP] stdout length:', stdout.length);
-
-        if (code !== 0 && code !== null) {
-          reject(new Error(`OpenCode exited with code ${code}: ${stderr}`));
-          return;
-        }
-
-        try {
-          const comments = this.parseReviewOutput(stdout, filePath);
-          console.log('[ReviewMP] Parsed comments:', comments.length);
-          resolve(comments);
-        } catch (error) {
-          reject(new Error(`Failed to parse review output: ${error}`));
-        }
+      proc.on('close', (code) => {
+        settle(() => {
+          if (code !== 0 && code !== null) {
+            reject(new Error(`${command} exited with code ${code}: ${stderr}`));
+          } else {
+            resolve({ stdout, stderr });
+          }
+        });
       });
 
       proc.on('error', (error) => {
-        console.log('[ReviewMP] Process error:', error.message);
-        reject(new Error(`Failed to start OpenCode: ${error.message}`));
+        settle(() => reject(new Error(`Failed to start ${command}: ${error.message}`)));
       });
     });
   }
 
-  private buildReviewPrompt(code: string, languageId: string, filePath: string): string {
-    // Add line numbers to each line of code for unambiguous line tracking
-    const lines = code.split('\n');
-    const numberedCode = lines
-      .map((line, index) => `${index + 1}: ${line}`)
-      .join('\n');
+  /**
+   * Run opencode with the reviewmp agent and return stdout.
+   */
+  private async runOpenCodeAgent(
+    prompt: string,
+    cancellationToken: vscode.CancellationToken
+  ): Promise<string> {
+    const args = ['run', '--agent', 'reviewmp', '--format', 'json'];
+    const model = this.getModel();
+    if (model) {
+      args.push('--model', model);
+    }
+    args.push(prompt);
 
-    return `Review the following ${languageId} code from file "${filePath}".
-
-<code>
-${numberedCode}
-</code>
-
-The code is prefixed with line numbers (1-based). When reporting issues, use the line numbers shown in the code.
-
-Provide your review as a JSON array of comments. Understand the entire code before reviewing. Each comment should identify issues, suggest improvements, or highlight potential bugs.`;
+    const result = await this.spawnProcess(this.getOpenCodePath(), args, cancellationToken);
+    return result.stdout;
   }
 
-  private parseReviewOutput(output: string, filePath: string): ReviewComment[] {
-    // OpenCode with --format json outputs newline-delimited JSON events
-    // Each line is a JSON object with structure like:
-    // { "type": "text", "part": { "text": "..." } }
+  /**
+   * Run a git command and return stdout.
+   */
+  private async execGit(
+    args: string[],
+    cancellationToken: vscode.CancellationToken
+  ): Promise<string> {
+    const result = await this.spawnProcess('git', args, cancellationToken);
+    return result.stdout.trim();
+  }
+
+  // ── Parsing ──────────────────────────────────────────────────────────
+
+  /**
+   * Collect text from NDJSON output and extract a JSON array.
+   * Returns { comments, parseError } so callers can distinguish
+   * "no issues" from "failed to parse".
+   */
+  private parseNDJSON(
+    output: string,
+    validator: CommentValidator
+  ): { comments: ReviewComment[]; parseError: boolean } {
     const lines = output.trim().split('\n');
     let collectedText = '';
 
     for (const line of lines) {
       try {
         const event = JSON.parse(line);
-
-        // Look for text events - the actual content is in part.text
         if (event.type === 'text' && event.part?.text) {
           collectedText += event.part.text;
         }
       } catch {
-        // Skip non-JSON lines or parsing errors
         continue;
       }
     }
 
-    // Now parse the collected text as JSON
-    if (collectedText) {
-      const jsonMatch = collectedText.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
+    // Try to extract JSON array from collected text
+    const sources = [collectedText, output];
+    for (const source of sources) {
+      if (!source) {
+        continue;
+      }
+      const jsonStr = this.extractJsonArray(source);
+      if (jsonStr) {
         try {
-          const comments = JSON.parse(jsonMatch[0]);
-          return this.validateComments(comments, filePath);
+          const parsed = JSON.parse(jsonStr);
+          return { comments: validator(parsed), parseError: false };
         } catch {
-          // JSON parsing failed
+          // continue to next source
         }
       }
     }
 
-    // Fallback: try to find JSON array in the raw output
-    const jsonMatch = output.match(/\[[\s\S]*?\]/);
-    if (jsonMatch) {
-      try {
-        const comments = JSON.parse(jsonMatch[0]);
-        return this.validateComments(comments, filePath);
-      } catch {
-        // Parsing failed
+    // If we collected text but couldn't parse it, that's a parse error.
+    // If there was no text at all, it's also a parse error (unexpected empty output).
+    return { comments: [], parseError: collectedText.length > 0 || output.trim().length > 0 };
+  }
+
+  /**
+   * Extract the first balanced JSON array from a string.
+   * Uses bracket counting instead of greedy regex to avoid
+   * matching past the actual array boundary.
+   */
+  private extractJsonArray(text: string): string | null {
+    const start = text.indexOf('[');
+    if (start === -1) {
+      return null;
+    }
+
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i];
+
+      if (escape) {
+        escape = false;
+        continue;
+      }
+
+      if (ch === '\\' && inString) {
+        escape = true;
+        continue;
+      }
+
+      if (ch === '"') {
+        inString = !inString;
+        continue;
+      }
+
+      if (inString) {
+        continue;
+      }
+
+      if (ch === '[') {
+        depth++;
+      } else if (ch === ']') {
+        depth--;
+        if (depth === 0) {
+          return text.substring(start, i + 1);
+        }
       }
     }
 
-    return [];
+    return null;
   }
 
-  private validateComments(data: unknown, filePath: string): ReviewComment[] {
+  private validateFileComments(data: unknown, filePath: string): ReviewComment[] {
     if (!Array.isArray(data)) {
       return [];
     }
@@ -186,366 +249,12 @@ Provide your review as a JSON array of comments. Understand the entire code befo
         );
       })
       .map((item) => ({
-        file: filePath,
-        line: (item.line as number) - 1, // Convert to 0-based line numbers
+        file: typeof item.file === 'string' ? item.file : filePath,
+        line: (item.line as number) - 1,
         message: item.message as string,
         fix: typeof item.fix === 'string' ? item.fix : undefined,
         severity: this.validateSeverity(item.severity),
       }));
-  }
-
-  private validateSeverity(
-    severity: unknown
-  ): 'error' | 'warning' | 'info' | 'suggestion' | undefined {
-    if (
-      severity === 'error' ||
-      severity === 'warning' ||
-      severity === 'info' ||
-      severity === 'suggestion'
-    ) {
-      return severity;
-    }
-    return undefined;
-  }
-
-  private async executeDiffCommand(
-    diffCommand: string,
-    cancellationToken: vscode.CancellationToken
-  ): Promise<string> {
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-
-    return new Promise((resolve, reject) => {
-      const proc = spawn('bash', ['-c', diffCommand], {
-        cwd,
-        env: process.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-
-      let stdout = '';
-      let stderr = '';
-
-      proc.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      proc.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      cancellationToken.onCancellationRequested(() => {
-        proc.kill();
-        reject(new Error('Cancelled'));
-      });
-
-      proc.on('close', (code) => {
-        if (code !== 0 && code !== null) {
-          reject(new Error(`git exited with code ${code}: ${stderr}`));
-        } else {
-          resolve(stdout);
-        }
-      });
-
-      proc.on('error', (error) => {
-        reject(error);
-      });
-    });
-  }
-
-  private formatDiffWithLineNumbers(diffOutput: string): string {
-    const lines = diffOutput.split('\n');
-    const formattedLines: string[] = [];
-    let currentLineNum = 0;
-    let inHunk = false;
-
-    for (const line of lines) {
-      // File header
-      if (line.startsWith('diff --git')) {
-        formattedLines.push(line);
-        continue;
-      }
-
-      if (line.startsWith('---') || line.startsWith('+++')) {
-        formattedLines.push(line);
-        continue;
-      }
-
-      // Hunk header - extract starting line number
-      if (line.startsWith('@@')) {
-        formattedLines.push(line);
-        inHunk = true;
-        // Parse line number from hunk header: @@ -10,5 +15,7 @@
-        const match = line.match(/\+(\d+)/);
-        if (match) {
-          currentLineNum = parseInt(match[1], 10) - 1;
-        }
-        continue;
-      }
-
-      if (!inHunk) {
-        formattedLines.push(line);
-        continue;
-      }
-
-      // In a hunk - only include added lines, skip context and removed lines
-      if (line.startsWith('+') && !line.startsWith('+++')) {
-        // Added line - include with line number
-        currentLineNum++;
-        formattedLines.push(`${currentLineNum}: ${line.substring(1)}`);
-      } else if (line.startsWith('-') && !line.startsWith('---')) {
-        // Removed line - skip it completely (being deleted)
-        // Don't increment counter since this line is removed
-      } else if (line.startsWith(' ')) {
-        // Context line - skip it, just increment counter
-        currentLineNum++;
-      } else {
-        formattedLines.push(line);
-      }
-    }
-
-    return formattedLines.join('\n');
-  }
-
-  private async detectBaseBranch(
-    cancellationToken: vscode.CancellationToken
-  ): Promise<string> {
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-
-    const execGit = (args: string[]): Promise<string> => {
-      return new Promise((resolve, reject) => {
-        const proc = spawn('git', args, {
-          cwd,
-          env: process.env,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        });
-
-        let stdout = '';
-        let stderr = '';
-
-        proc.stdout.on('data', (data) => {
-          stdout += data.toString();
-        });
-
-        proc.stderr.on('data', (data) => {
-          stderr += data.toString();
-        });
-
-        cancellationToken.onCancellationRequested(() => {
-          proc.kill();
-          reject(new Error('Cancelled'));
-        });
-
-        proc.on('close', (code) => {
-          if (code === 0) {
-            resolve(stdout.trim());
-          } else {
-            reject(new Error(stderr || `git exited with code ${code}`));
-          }
-        });
-
-        proc.on('error', (error) => {
-          reject(error);
-        });
-      });
-    };
-
-    if (cancellationToken.isCancellationRequested) {
-      throw new Error('Cancelled');
-    }
-
-    // Check if 'main' exists (local or remote)
-    try {
-      await execGit(['rev-parse', '--verify', 'main']);
-      return 'main';
-    } catch {
-      // main doesn't exist locally
-    }
-
-    try {
-      await execGit(['rev-parse', '--verify', 'origin/main']);
-      return 'origin/main';
-    } catch {
-      // origin/main doesn't exist
-    }
-
-    // Check if 'master' exists (local or remote)
-    try {
-      await execGit(['rev-parse', '--verify', 'master']);
-      return 'master';
-    } catch {
-      // master doesn't exist locally
-    }
-
-    try {
-      await execGit(['rev-parse', '--verify', 'origin/master']);
-      return 'origin/master';
-    } catch {
-      // origin/master doesn't exist
-    }
-
-    // Try to get default branch from local ref (no network access)
-    try {
-      const symbolicRef = await execGit(['symbolic-ref', 'refs/remotes/origin/HEAD']);
-      // Returns something like "refs/remotes/origin/main"
-      const match = symbolicRef.match(/refs\/remotes\/origin\/(.+)/);
-      if (match) {
-        return `origin/${match[1]}`;
-      }
-    } catch {
-      // symbolic-ref failed (origin/HEAD not set)
-    }
-
-    if (cancellationToken.isCancellationRequested) {
-      throw new Error('Cancelled');
-    }
-
-    // Fallback: ask the user
-    const userInput = await vscode.window.showInputBox({
-      prompt: 'Could not detect base branch. Please enter the base branch name:',
-      placeHolder: 'main',
-      value: 'main',
-    });
-
-    return userInput || 'main';
-  }
-
-  async reviewDiff(
-    type: 'staged' | 'uncommitted' | 'lastCommit' | 'branch',
-    cancellationToken: vscode.CancellationToken
-  ): Promise<ReviewComment[]> {
-    let diffCommand: string;
-
-    if (type === 'branch') {
-      const baseBranch = await this.detectBaseBranch(cancellationToken);
-      diffCommand = `git diff ${baseBranch}...HEAD`;
-    } else {
-      const commands: Record<string, string> = {
-        staged: 'git diff --cached',
-        uncommitted: 'git diff',
-        lastCommit: 'git diff HEAD~1 HEAD',
-      };
-      diffCommand = commands[type];
-    }
-
-    // Get the diff output
-    const diffOutput = await this.executeDiffCommand(diffCommand, cancellationToken);
-
-    // Format diff with line numbers
-    const formattedDiff = this.formatDiffWithLineNumbers(diffOutput);
-
-    // Build prompt with formatted diff
-    const prompt = `Review the following git changes. The diff is formatted with line numbers for accurate reference:
-
-<diff>
-${formattedDiff}
-</diff>
-
-When reporting issues:
-1. Use the line numbers shown in the diff (the numbers before each line of code)
-2. Include the file path for each issue (from the diff header like "diff --git a/path/to/file.ts b/path/to/file.ts")
-3. Provide your review as a JSON array with required fields: file, line, message, severity
-4. Ensure you understand the changes before reviewing`;
-
-
-    return new Promise((resolve, reject) => {
-      const opencodePath = this.getOpenCodePath();
-      const model = this.getModel();
-      const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-
-      const args = ['run', '--agent', 'reviewmp', '--format', 'json'];
-      if (model) {
-        args.push('--model', model);
-      }
-      args.push(prompt);
-
-      const proc = spawn(opencodePath, args, {
-        cwd,
-        env: process.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-
-      console.log('[ReviewMP-Diff] Started process, PID:', proc.pid);
-
-      let stdout = '';
-      let stderr = '';
-
-      proc.stdout.on('data', (data) => {
-        const chunk = data.toString();
-        console.log('[ReviewMP-Diff] stdout chunk:', chunk.substring(0, 500));
-        stdout += chunk;
-      });
-
-      proc.stderr.on('data', (data) => {
-        const chunk = data.toString();
-        console.log('[ReviewMP-Diff] stderr:', chunk);
-        stderr += chunk;
-      });
-
-      cancellationToken.onCancellationRequested(() => {
-        console.log('[ReviewMP-Diff] Cancelled');
-        proc.kill();
-        reject(new Error('Review cancelled'));
-      });
-
-      proc.on('close', (code) => {
-        console.log('[ReviewMP-Diff] Process closed, code:', code);
-        console.log('[ReviewMP-Diff] stdout length:', stdout.length);
-
-        if (code !== 0 && code !== null) {
-          reject(new Error(`OpenCode exited with code ${code}: ${stderr}`));
-          return;
-        }
-
-        try {
-          const comments = this.parseDiffReviewOutput(stdout);
-          console.log('[ReviewMP-Diff] Parsed comments:', comments.length);
-          resolve(comments);
-        } catch (error) {
-          reject(new Error(`Failed to parse review output: ${error}`));
-        }
-      });
-
-      proc.on('error', (error) => {
-        reject(new Error(`Failed to start OpenCode: ${error.message}`));
-      });
-    });
-  }
-
-  private parseDiffReviewOutput(output: string): ReviewComment[] {
-    const lines = output.trim().split('\n');
-    let collectedText = '';
-
-    for (const line of lines) {
-      try {
-        const event = JSON.parse(line);
-        if (event.type === 'text' && event.part?.text) {
-          collectedText += event.part.text;
-        }
-      } catch {
-        continue;
-      }
-    }
-
-    console.log('[ReviewMP-Diff] Collected text:', collectedText.substring(0, 1000));
-
-    if (collectedText) {
-      const jsonMatch = collectedText.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        console.log('[ReviewMP-Diff] Found JSON match:', jsonMatch[0].substring(0, 500));
-        try {
-          const comments = JSON.parse(jsonMatch[0]);
-          console.log('[ReviewMP-Diff] Parsed JSON, items:', comments.length);
-          return this.validateDiffComments(comments);
-        } catch (e) {
-          console.log('[ReviewMP-Diff] JSON parse error:', e);
-        }
-      } else {
-        console.log('[ReviewMP-Diff] No JSON array found in collected text');
-      }
-    } else {
-      console.log('[ReviewMP-Diff] No text collected from output');
-    }
-
-    return [];
   }
 
   private validateDiffComments(data: unknown): ReviewComment[] {
@@ -572,6 +281,206 @@ When reporting issues:
       }));
   }
 
+  private validateSeverity(
+    severity: unknown
+  ): 'error' | 'warning' | 'info' | 'suggestion' | undefined {
+    if (
+      severity === 'error' ||
+      severity === 'warning' ||
+      severity === 'info' ||
+      severity === 'suggestion'
+    ) {
+      return severity;
+    }
+    return undefined;
+  }
+
+  // ── Public API ───────────────────────────────────────────────────────
+
+  async reviewCode(
+    code: string,
+    languageId: string,
+    filePath: string,
+    cancellationToken: vscode.CancellationToken
+  ): Promise<ReviewComment[]> {
+    const prompt = this.buildReviewPrompt(code, languageId, filePath);
+    const output = await this.runOpenCodeAgent(prompt, cancellationToken);
+    const { comments, parseError } = this.parseNDJSON(
+      output,
+      (data) => this.validateFileComments(data, filePath)
+    );
+
+    if (parseError && comments.length === 0) {
+      console.warn('[ReviewMP] Failed to parse review output, raw length:', output.length);
+      throw new Error('Failed to parse review output — the model may have returned an unexpected format');
+    }
+
+    return comments;
+  }
+
+  private buildReviewPrompt(code: string, languageId: string, filePath: string): string {
+    const lines = code.split('\n');
+    const numberedCode = lines
+      .map((line, index) => `${index + 1}: ${line}`)
+      .join('\n');
+
+    return `Review the following ${languageId} code from file "${filePath}".
+
+<code>
+${numberedCode}
+</code>
+
+The code is prefixed with line numbers (1-based). When reporting issues, use the line numbers shown in the code.
+
+Provide your review as a JSON array of comments. Understand the entire code before reviewing. Each comment should identify issues, suggest improvements, or highlight potential bugs.`;
+  }
+
+  async reviewDiff(
+    type: 'staged' | 'uncommitted' | 'lastCommit' | 'branch',
+    cancellationToken: vscode.CancellationToken
+  ): Promise<ReviewComment[]> {
+    let gitArgs: string[];
+
+    if (type === 'branch') {
+      const baseBranch = await this.detectBaseBranch(cancellationToken);
+      gitArgs = ['diff', `${baseBranch}...HEAD`];
+    } else {
+      const argMap: Record<string, string[]> = {
+        staged: ['diff', '--cached'],
+        uncommitted: ['diff'],
+        lastCommit: ['diff', 'HEAD~1', 'HEAD'],
+      };
+      gitArgs = argMap[type];
+    }
+
+    const diffOutput = await this.execGit(gitArgs, cancellationToken);
+    const formattedDiff = this.formatDiffWithLineNumbers(diffOutput);
+
+    const prompt = `Review the following git changes. The diff is formatted with line numbers for accurate reference:
+
+<diff>
+${formattedDiff}
+</diff>
+
+When reporting issues:
+1. Use the line numbers shown in the diff (the numbers before each line of code)
+2. Include the file path for each issue (from the diff header like "diff --git a/path/to/file.ts b/path/to/file.ts")
+3. Provide your review as a JSON array with required fields: file, line, message, severity
+4. Ensure you understand the changes before reviewing`;
+
+    const output = await this.runOpenCodeAgent(prompt, cancellationToken);
+    const { comments, parseError } = this.parseNDJSON(
+      output,
+      (data) => this.validateDiffComments(data)
+    );
+
+    if (parseError && comments.length === 0) {
+      console.warn('[ReviewMP-Diff] Failed to parse review output, raw length:', output.length);
+      throw new Error('Failed to parse review output — the model may have returned an unexpected format');
+    }
+
+    return comments;
+  }
+
+  private formatDiffWithLineNumbers(diffOutput: string): string {
+    const lines = diffOutput.split('\n');
+    const formattedLines: string[] = [];
+    let currentLineNum = 0;
+    let inHunk = false;
+
+    for (const line of lines) {
+      if (line.startsWith('diff --git')) {
+        formattedLines.push(line);
+        inHunk = false;
+        continue;
+      }
+
+      if (line.startsWith('---') || line.startsWith('+++')) {
+        formattedLines.push(line);
+        continue;
+      }
+
+      if (line.startsWith('@@')) {
+        formattedLines.push(line);
+        inHunk = true;
+        const match = line.match(/\+(\d+)/);
+        if (match) {
+          currentLineNum = parseInt(match[1], 10) - 1;
+        }
+        continue;
+      }
+
+      if (!inHunk) {
+        formattedLines.push(line);
+        continue;
+      }
+
+      if (line.startsWith('+') && !line.startsWith('+++')) {
+        currentLineNum++;
+        formattedLines.push(`${currentLineNum}: ${line.substring(1)}`);
+      } else if (line.startsWith('-') && !line.startsWith('---')) {
+        // Removed line — don't increment counter
+      } else if (line.startsWith(' ')) {
+        currentLineNum++;
+      } else {
+        formattedLines.push(line);
+      }
+    }
+
+    return formattedLines.join('\n');
+  }
+
+  private async detectBaseBranch(
+    cancellationToken: vscode.CancellationToken
+  ): Promise<string> {
+    if (cancellationToken.isCancellationRequested) {
+      throw new Error('Cancelled');
+    }
+
+    const candidates = [
+      ['rev-parse', '--verify', 'main'],
+      ['rev-parse', '--verify', 'origin/main'],
+      ['rev-parse', '--verify', 'master'],
+      ['rev-parse', '--verify', 'origin/master'],
+    ];
+
+    for (const args of candidates) {
+      try {
+        await this.execGit(args, cancellationToken);
+        // Return the branch name (last arg)
+        return args[args.length - 1];
+      } catch {
+        // try next
+      }
+    }
+
+    // Try symbolic-ref
+    try {
+      const symbolicRef = await this.execGit(
+        ['symbolic-ref', 'refs/remotes/origin/HEAD'],
+        cancellationToken
+      );
+      const match = symbolicRef.match(/refs\/remotes\/origin\/(.+)/);
+      if (match) {
+        return `origin/${match[1]}`;
+      }
+    } catch {
+      // not set
+    }
+
+    if (cancellationToken.isCancellationRequested) {
+      throw new Error('Cancelled');
+    }
+
+    const userInput = await vscode.window.showInputBox({
+      prompt: 'Could not detect base branch. Please enter the base branch name:',
+      placeHolder: 'main',
+      value: 'main',
+    });
+
+    return userInput || 'main';
+  }
+
   async applyFix(filePath: string, line: number, fix: string): Promise<void> {
     const prompt = `Apply the following fix to line ${line + 1} in file "${filePath}":
 
@@ -579,40 +488,13 @@ ${fix}
 
 Make only this specific change. Do not modify any other lines.`;
 
-    return new Promise((resolve, reject) => {
-      const opencodePath = this.getOpenCodePath();
-      const model = this.getModel();
-      const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const args = ['run', '--agent', 'reviewmp', '--format', 'json'];
+    const model = this.getModel();
+    if (model) {
+      args.push('--model', model);
+    }
+    args.push(prompt);
 
-      const args = ['run'];
-      if (model) {
-        args.push('--model', model);
-      }
-      args.push(prompt);
-
-      const proc = spawn(opencodePath, args, {
-        cwd,
-        env: process.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-
-      let stderr = '';
-
-      proc.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      proc.on('close', (code) => {
-        if (code !== 0) {
-          reject(new Error(`OpenCode exited with code ${code}: ${stderr}`));
-          return;
-        }
-        resolve();
-      });
-
-      proc.on('error', (error) => {
-        reject(new Error(`Failed to start OpenCode: ${error.message}`));
-      });
-    });
+    await this.spawnProcess(this.getOpenCodePath(), args);
   }
 }
