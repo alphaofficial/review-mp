@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { spawn } from 'child_process';
 import { ReviewComment } from './comments';
+import { getOpenCodeMissingErrorMessage, resolveOpenCodePath } from './opencodePath';
 
 
 
@@ -8,22 +9,19 @@ export class OpenCodeService {
   private getOpenCodePath(): string {
     const config = vscode.workspace.getConfiguration('reviewmp');
     const configured = config.get<string>('opencodePath');
-    if (configured && configured !== 'opencode') {
-      return configured;
-    }
-    // Default paths for opencode binary
-    const defaultPaths = [
-      '/opt/homebrew/bin/opencode',  // macOS ARM
-      '/usr/local/bin/opencode',      // macOS Intel / Linux
-      'opencode',                      // fallback to PATH
-    ];
-    return defaultPaths[0]; // Use homebrew path as default for now
+    return resolveOpenCodePath({ configuredPath: configured });
   }
 
   private getModel(): string | undefined {
     const config = vscode.workspace.getConfiguration('reviewmp');
     const model = config.get<string>('model');
     return model && model.trim() !== '' ? model : undefined;
+  }
+
+  private getOpenCodeStartupError(error: Error, opencodePath: string): Error {
+    return new Error(
+      `Failed to start OpenCode at "${opencodePath}". ${getOpenCodeMissingErrorMessage()} Original error: ${error.message}`
+    );
   }
 
   async reviewCode(
@@ -100,7 +98,7 @@ export class OpenCodeService {
 
       proc.on('error', (error) => {
         console.log('[ReviewMP] Process error:', error.message);
-        reject(new Error(`Failed to start OpenCode: ${error.message}`));
+        reject(this.getOpenCodeStartupError(error, opencodePath));
       });
     });
   }
@@ -505,7 +503,7 @@ When reporting issues:
       });
 
       proc.on('error', (error) => {
-        reject(new Error(`Failed to start OpenCode: ${error.message}`));
+        reject(this.getOpenCodeStartupError(error, opencodePath));
       });
     });
   }
@@ -611,7 +609,7 @@ Make only this specific change. Do not modify any other lines.`;
       });
 
       proc.on('error', (error) => {
-        reject(new Error(`Failed to start OpenCode: ${error.message}`));
+        reject(this.getOpenCodeStartupError(error, opencodePath));
       });
     });
   }
