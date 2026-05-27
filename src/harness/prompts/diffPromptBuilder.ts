@@ -1,4 +1,4 @@
-import { ReviewRequest } from '../types/review';
+import { ReviewRequest } from '../../types/review';
 
 export interface DiffPromptResult {
   prompt: string;

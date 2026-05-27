@@ -3,7 +3,7 @@ import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ToolRequest, ToolResult } from '../types/review';
-import { logToolError, logToolWarning } from './diagnostics';
+import { logToolError, logToolWarning, DiagnosticContext } from './diagnostics';
 
 export type ToolName = 'read_file' | 'search_workspace' | 'list_related_files' | 'git_diff' | 'git_log' | 'package_metadata';
 
@@ -41,11 +41,11 @@ export class ToolExecutor {
   }
 
   async execute(request: ToolRequest, token?: vscode.CancellationToken): Promise<ToolResult> {
-    const toolContext = { tool: request.tool };
+    const context = {};
 
     if (!this.isAllowedTool(request.tool)) {
       const error = `Unknown tool: ${request.tool}. Allowed tools: ${this.allowedTools.join(', ')}`;
-      logToolError(request.tool, 'Unknown tool requested', error, toolContext);
+      logToolError(request.tool, 'Unknown tool requested', error, context);
       return {
         tool: request.tool,
         result: null,
@@ -55,7 +55,7 @@ export class ToolExecutor {
 
     try {
       if (token?.isCancellationRequested) {
-        logToolWarning(request.tool, 'Tool execution cancelled', toolContext);
+        logToolWarning(request.tool, 'Tool execution cancelled', context);
         return {
           tool: request.tool,
           result: null,
@@ -65,17 +65,17 @@ export class ToolExecutor {
 
       switch (request.tool) {
         case 'read_file':
-          return this.readFile(request.args, toolContext);
+          return this.readFile(request.args, context);
         case 'search_workspace':
-          return this.searchWorkspace(request.args, toolContext);
+          return this.searchWorkspace(request.args, context);
         case 'list_related_files':
-          return this.listRelatedFiles(request.args, toolContext);
+          return this.listRelatedFiles(request.args, context);
         case 'git_diff':
-          return this.gitDiff(request.args, token, toolContext);
+          return this.gitDiff(request.args, token, context);
         case 'git_log':
-          return this.gitLog(request.args, token, toolContext);
+          return this.gitLog(request.args, token, context);
         case 'package_metadata':
-          return this.packageMetadata(toolContext);
+          return this.packageMetadata(context);
         default:
           return {
             tool: request.tool,
@@ -85,7 +85,7 @@ export class ToolExecutor {
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      logToolError(request.tool, 'Tool execution threw exception', errorMessage, toolContext);
+      logToolError(request.tool, 'Tool execution threw exception', errorMessage, context);
       return {
         tool: request.tool,
         result: null,
@@ -106,7 +106,7 @@ export class ToolExecutor {
     return results;
   }
 
-  private readFile(args: Record<string, unknown>, context: { tool: string }): ToolResult {
+  private readFile(args: Record<string, unknown>, context: DiagnosticContext): ToolResult {
     const filePath = args.path as string;
     if (!filePath) {
       const error = 'Missing required parameter: path';
@@ -155,7 +155,7 @@ export class ToolExecutor {
     }
   }
 
-  private async searchWorkspace(args: Record<string, unknown>, context: { tool: string }): Promise<ToolResult> {
+  private async searchWorkspace(args: Record<string, unknown>, context: DiagnosticContext): Promise<ToolResult> {
     const pattern = args.pattern as string;
     if (!pattern) {
       const error = 'Missing required parameter: pattern';
@@ -191,7 +191,7 @@ export class ToolExecutor {
     }
   }
 
-  private listRelatedFiles(args: Record<string, unknown>, context: { tool: string }): ToolResult {
+  private listRelatedFiles(args: Record<string, unknown>, context: DiagnosticContext): ToolResult {
     const filePath = args.filePath as string;
     if (!filePath) {
       const error = 'Missing required parameter: filePath';
@@ -265,7 +265,7 @@ export class ToolExecutor {
     return Object.values(relatedExtensions).some(exts => exts.includes(ext));
   }
 
-  private async gitDiff(args: Record<string, unknown>, token?: vscode.CancellationToken, context: { tool: string } = { tool: 'git_diff' }): Promise<ToolResult> {
+  private async gitDiff(args: Record<string, unknown>, token?: vscode.CancellationToken, context: DiagnosticContext = {}): Promise<ToolResult> {
     const target = args.target as string | undefined;
     const base = args.base as string | undefined;
 
@@ -298,7 +298,7 @@ export class ToolExecutor {
     }
   }
 
-  private async gitLog(args: Record<string, unknown>, token?: vscode.CancellationToken, context: { tool: string } = { tool: 'git_log' }): ToolResult {
+  private async gitLog(args: Record<string, unknown>, token?: vscode.CancellationToken, context: DiagnosticContext = {}): Promise<ToolResult> {
     const filePath = args.file as string | undefined;
     const maxCount = Math.min(
       (args.maxCount as number) || this.maxGitLogEntries,
@@ -354,7 +354,7 @@ export class ToolExecutor {
     }
   }
 
-  private packageMetadata(context: { tool: string } = { tool: 'package_metadata' }): ToolResult {
+  private packageMetadata(context: DiagnosticContext = {}): ToolResult {
     const packageJsonPath = path.join(this.workspaceRoot, 'package.json');
 
     if (!this.isWithinWorkspace(packageJsonPath)) {

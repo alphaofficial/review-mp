@@ -71,7 +71,7 @@ export class OpenCodeProvider implements ModelProvider {
       args.push(promptResult.prompt);
 
       console.log('[ReviewMP] OpenCode path:', opencodePath);
-      console.log('[ReviewMP] Prompt length:', prompt.length);
+      console.log('[ReviewMP] Prompt length:', promptResult.prompt.length);
       console.log('[ReviewMP] CWD:', cwd);
 
       this.currentProcess = spawn(opencodePath, args, {

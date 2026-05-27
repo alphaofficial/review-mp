@@ -44,7 +44,7 @@ export class CustomCliProvider implements ModelProvider {
 
   isAvailable(): Promise<boolean> {
     const config = this.getSettings();
-    return Promise.resolve(config.command.trim().length > 0);
+    return Promise.resolve((config.command ?? '').trim().length > 0);
   }
 
   cancel(): void {
@@ -99,7 +99,7 @@ export class CustomCliProvider implements ModelProvider {
     }
 
     return new Promise((resolve, reject) => {
-      const args = this.buildArgs(config.args, prompt);
+      const args = this.buildArgs(config.args ?? '', prompt);
       const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
       logDebug('CustomCliProvider: command:', config.command);
@@ -117,12 +117,16 @@ export class CustomCliProvider implements ModelProvider {
         stdio: config.promptViaStdin ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
       };
 
-      this.currentProcess = spawn(config.command, args, spawnOptions);
+      this.currentProcess = spawn(config.command!, args, spawnOptions);
 
       let stdout = '';
       let stderr = '';
 
       const proc = this.currentProcess;
+      if (!proc) {
+        reject(new Error('Failed to spawn process'));
+        return;
+      }
 
       if (config.promptViaStdin && proc.stdin) {
         proc.stdin.write(prompt);
@@ -154,7 +158,7 @@ export class CustomCliProvider implements ModelProvider {
         }
 
         try {
-          const comments = this.parseOutput(stdout, defaultFilePath, config.outputMode);
+          const comments = this.parseOutput(stdout, defaultFilePath, config.outputMode ?? 'text');
           logDebug('CustomCliProvider: Parsed comments:', comments.length);
           resolve({ comments, provider: this.name });
         } catch (error) {
@@ -297,7 +301,7 @@ Make only this specific change. Do not modify any other lines.`;
     }
 
     return new Promise((resolve, reject) => {
-      const args = this.buildArgs(config.args, prompt);
+      const args = this.buildArgs(config.args ?? '', prompt);
       const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
       const spawnOptions: {
@@ -310,11 +314,15 @@ Make only this specific change. Do not modify any other lines.`;
         stdio: config.promptViaStdin ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
       };
 
-      this.currentProcess = spawn(config.command, args, spawnOptions);
+      this.currentProcess = spawn(config.command!, args, spawnOptions);
 
       let stderr = '';
 
       const proc = this.currentProcess;
+      if (!proc) {
+        reject(new Error('Failed to spawn process'));
+        return;
+      }
 
       if (config.promptViaStdin && proc.stdin) {
         proc.stdin.write(prompt);
