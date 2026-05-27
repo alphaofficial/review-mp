@@ -5,7 +5,7 @@ import * as path from 'path';
 import { RuntimeAdapter, RuntimeManifest, NormalizedReviewResult, RuntimeSettings } from './runtimeRegistry';
 import { ReviewRequest } from '../types/review';
 import { buildFileReviewPrompt, buildSelectionReviewPrompt, buildDiffReviewPrompt, formatDiffWithLineNumbers } from '../harness/prompts';
-import { OutputParser } from '../harness/outputParser';
+import { NormalizerFactory } from './outputNormalizer';
 
 export class CliRuntimeAdapter implements RuntimeAdapter {
   readonly manifest: RuntimeManifest;
@@ -229,24 +229,21 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
   }
 
   private normalizeOutput(rawOutput: string, request: ReviewRequest): NormalizedReviewResult {
-    const isDiffReview = request.reviewType !== 'file' && request.reviewType !== 'selection';
-
-    const parser = new OutputParser({
+    const normalizer = NormalizerFactory.create(this.manifest.outputFormat);
+    const context = {
       defaultFilePath: request.filePath,
-      strictSeverityValidation: false,
-    });
+      reviewType: request.reviewType,
+    };
 
-    const comments = isDiffReview
-      ? parser.parseForDiffReview(rawOutput)
-      : parser.parseForFileReview(rawOutput);
+    const result = normalizer.normalize(rawOutput, context);
 
-    if (this.debug && comments.length === 0) {
+    if (this.debug && result.comments.length === 0) {
       console.log(`[CliRuntimeAdapter:${this.manifest.id}] No comments parsed from output:`, rawOutput.substring(0, 500));
     }
 
     return {
-      comments,
-      rawText: rawOutput,
+      comments: result.comments,
+      rawText: result.rawText,
       metadata: {
         runtimeId: this.manifest.id,
         model: this.model,
