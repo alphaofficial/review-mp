@@ -1,43 +1,40 @@
 # ReviewMP
 
-AI-powered code review extension for VS Code using OpenCode CLI.
+Provider-neutral AI code review for VS Code with inline comments.
 
 ## Features
 
 - Review code with AI and see inline comments directly in VS Code
-- Review git staged changes, uncommitted changes, or last commit
+- Review file, selection, staged changes, uncommitted changes, last commit, or branch
 - Accept or reject suggested fixes
 - Auto-review on stage or before commit (optional)
-- Uses OpenCode CLI for LLM integration
+- **Multi-provider support**: OpenCode, Custom CLI, OpenAI-compatible HTTP, Anthropic
+- Read-only tool execution for safe context gathering
+- Comment validation before placement
+- Bounded review iterations with retry handling
+
+## Supported Providers
+
+| Provider | Description |
+|----------|-------------|
+| `opencode` | Use OpenCode CLI (default, backward compatible) |
+| `custom-cli` | Use a custom CLI command for reviews |
+| `openai-compatible` | Use any OpenAI-compatible HTTP API |
+| `anthropic` | Use Anthropic Messages API |
 
 ## Prerequisites
 
-1. **OpenCode CLI** installed and configured with a provider
-   ```bash
-   npm install -g opencode-ai
-   opencode auth login
-   ```
+1. **Node.js** 18+ for building the extension
 
-2. **Node.js** 18+ for building the extension
+2. **Provider setup** (choose one):
+   - **OpenCode**: `npm install -g opencode-ai` and `opencode auth login`
+   - **Anthropic**: API key for Anthropic Messages API
+   - **OpenAI-compatible**: API key for your provider
+   - **Custom CLI**: Any CLI that accepts prompts and returns JSON
 
 ## Setup
 
-### 1. Install the OpenCode Agents
-
-Copy the agent configurations to your OpenCode config directory:
-
-```bash
-# Global installation
-cp opencode-agent/reviewmp.md ~/.config/opencode/agent/
-cp opencode-agent/reviewmp-diff.md ~/.config/opencode/agent/
-
-# Or per-project
-mkdir -p .opencode/agent
-cp opencode-agent/reviewmp.md .opencode/agent/
-cp opencode-agent/reviewmp-diff.md .opencode/agent/
-```
-
-### 2. Build the Extension
+### 1. Build the Extension
 
 ```bash
 cd reviewmp
@@ -45,7 +42,7 @@ npm install
 npm run compile
 ```
 
-### 3. Install in VS Code
+### 2. Install in VS Code
 
 **Option A: Development mode**
 
@@ -92,11 +89,25 @@ If the automated script doesn't work, you can run these steps manually:
    - Open Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
    - Run "Developer: Reload Window"
 
+### 3. Configure Provider
+
+Open Command Palette and select a provider:
+
+```
+ReviewMP: Select Provider
+```
+
+Then set your API key:
+
+```
+ReviewMP: Set API Key
+```
+
 ## Usage
 
 1. Open a file in VS Code
 2. Open Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
-3. Run `ReviewMP: Review Current File`
+3. Run a review command (e.g., `ReviewMP: Review Current File`)
 4. Wait for the AI to analyze your code
 5. Review comments appear inline with Accept/Reject options
 
@@ -109,8 +120,13 @@ If the automated script doesn't work, you can run these steps manually:
 | `ReviewMP: Review Staged Changes` | Review git staged changes (`git diff --cached`) |
 | `ReviewMP: Review Uncommitted Changes` | Review all uncommitted changes (`git diff`) |
 | `ReviewMP: Review Last Commit` | Review the last commit (`git diff HEAD~1`) |
-| `ReviewMP: Review Branch Changes` | Review all commits on current branch vs base (`git diff main...HEAD`) |
+| `ReviewMP: Review Branch Changes` | Review all commits on current branch vs base |
+| `ReviewMP: Review Pull Request` | Review PR with clustered passes |
 | `ReviewMP: Clear All Comments` | Remove all review comments |
+| `ReviewMP: Select Provider` | Choose AI provider |
+| `ReviewMP: Set API Key` | Set provider API key |
+| `ReviewMP: Clear API Key` | Clear stored API key |
+| `ReviewMP: Toggle Debug Mode` | Enable/disable debug logging |
 
 ## Configuration
 
@@ -123,10 +139,12 @@ Settings can be configured via:
 Example `settings.json`:
 ```json
 {
-  "reviewmp.opencodePath": "/opt/homebrew/bin/opencode",
-  "reviewmp.model": "github-copilot/gpt-4o",
+  "reviewmp.provider": "anthropic",
+  "reviewmp.model": "claude-sonnet-4-20250514",
   "reviewmp.autoReviewOnStage": true,
-  "reviewmp.autoReviewOnCommit": false
+  "reviewmp.autoReviewOnCommit": false,
+  "reviewmp.debug": false,
+  "reviewmp.openaiCompatibleEndpoint": ""
 }
 ```
 
@@ -134,17 +152,52 @@ Example `settings.json`:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `reviewmp.opencodePath` | `opencode` | Path to OpenCode CLI |
-| `reviewmp.model` | (empty) | Model in `provider/model` format (see below) |
-| `reviewmp.autoReviewOnStage` | `false` | Automatically review when files are staged (`git add`) |
+| `reviewmp.provider` | `opencode` | Provider: `opencode`, `custom-cli`, `openai-compatible`, `anthropic` |
+| `reviewmp.opencodePath` | `opencode` | Path to OpenCode CLI (when using opencode provider) |
+| `reviewmp.model` | (empty) | Model in `provider/model` format. Leave empty for default. |
+| `reviewmp.autoReviewOnStage` | `false` | Automatically review when files are staged |
 | `reviewmp.autoReviewOnCommit` | `false` | Prompt to review before commit |
+| `reviewmp.debug` | `false` | Enable debug logging |
+| `reviewmp.customCliCommand` | (empty) | CLI command for custom-cli provider |
+| `reviewmp.customCliArgs` | (empty) | Additional arguments for custom CLI |
+| `reviewmp.openaiCompatibleEndpoint` | (empty) | Endpoint URL for openai-compatible provider |
 
-### Model Configuration
+### Provider Configuration
 
-The model setting uses the format `provider/model`. To see all available models, run:
+**OpenCode** (default):
+```json
+{
+  "reviewmp.provider": "opencode",
+  "reviewmp.opencodePath": "opencode",
+  "reviewmp.model": "github-copilot/gpt-4o"
+}
+```
 
-```bash
-opencode models
+**Anthropic**:
+```json
+{
+  "reviewmp.provider": "anthropic",
+  "reviewmp.model": "claude-sonnet-4-20250514"
+}
+```
+Then run `ReviewMP: Set API Key` to enter your Anthropic API key.
+
+**OpenAI-compatible**:
+```json
+{
+  "reviewmp.provider": "openai-compatible",
+  "reviewmp.openaiCompatibleEndpoint": "https://api.openai.com/v1"
+}
+```
+Then run `ReviewMP: Set API Key` to enter your API key.
+
+**Custom CLI**:
+```json
+{
+  "reviewmp.provider": "custom-cli",
+  "reviewmp.customCliCommand": "/usr/local/bin/review-ai",
+  "reviewmp.customCliArgs": "--model gpt-4"
+}
 ```
 
 ### Auto-Review Features
@@ -158,12 +211,31 @@ Both are disabled by default. The extension only activates on startup if one of 
 
 **Note**: After enabling auto-review settings, reload VS Code (`Developer: Reload Window`) for the changes to take effect.
 
-## How It Works
+## Architecture
 
-1. Extension sends your code to OpenCode CLI with the `reviewmp` agent (or `reviewmp-diff` for git changes)
-2. The agent reviews the code and outputs structured JSON
-3. Extension parses the JSON and creates VS Code comments
-4. Accept applies the fix using OpenCode, Reject dismisses the comment
+ReviewMP uses a provider-neutral architecture:
+
+```
+ReviewMP Command → ReviewOrchestrator → ReviewHarness → Provider → Model
+                                              ↓
+                                      ToolExecutor (read-only)
+                                              ↓
+                                      ContextCollector
+```
+
+- **ReviewOrchestrator**: Handles commands, progress, and cancellation
+- **ReviewHarness**: Bounded review loop with retry handling
+- **Provider**: Abstraction over OpenCode, CLI, HTTP, or Anthropic
+- **ToolExecutor**: Read-only tools for context gathering
+- **ContextCollector**: Git diff, branch detection, file reading
+
+## Security
+
+- API keys stored in VS Code Secret Storage
+- Read-only tool execution (no shell execution, no file writes during review)
+- Workspace reads constrained to active workspace
+- Git access read-only for review flows
+- No logging of API keys or full prompts
 
 ## Development
 
@@ -173,13 +245,19 @@ npm run watch
 
 # Lint
 npm run lint
+
+# Tests
+npm test
 ```
 
 ## Need to install local VSIX on remote endpoint
+
 Sometimes you want to install a local VSIX on a remote machine, either during development or when an extension author asks you to try out a fix.
 
 Resolution: Once you have connected to an SSH host, container, or WSL, you can install the VSIX the same way you would locally. Run the Extensions: Install from VSIX... command from the Command Palette (F1). You may also want to add "extensions.autoUpdate": false to settings.json to prevent auto-updating to the latest Marketplace version. See Supporting Remote Development for more information on developing and testing extensions in a remote environment.
-For remote run: code --install-extension  /Users/albert/Developer/review-mp/reviewmp-0.0.1.vsix
+
+For remote run: `code --install-extension /path/to/reviewmp-0.0.1.vsix`
+
 [VSCode Docs](https://code.visualstudio.com/docs/remote/troubleshooting#_extension-tips)
 
 ## License
