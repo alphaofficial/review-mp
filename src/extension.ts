@@ -2,12 +2,13 @@ import * as vscode from 'vscode';
 import { ReviewCommentController } from './comments';
 import { GitWatcher } from './gitWatcher';
 import { ReviewOrchestrator } from './reviewOrchestrator';
-import { ModelProvider, ReviewResult } from './providers/modelProvider';
+import { ModelProvider } from './providers/modelProvider';
+import { ReviewResult } from './types/review';
 import { CliRuntimeAdapter } from './providers/runtimeAdapter';
 import { globalRuntimeRegistry } from './providers/builtInRuntimes';
 import { RuntimeSettings } from './providers/runtimeRegistry';
 import { ReviewRequest } from './types/review';
-import { getSettings } from './settings';
+import { getSettings, registerSettingsCommands } from './settings';
 
 class RuntimeProviderAdapter implements ModelProvider {
   readonly name: string;
