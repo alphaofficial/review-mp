@@ -510,3 +510,350 @@ describe('CliRuntimeAdapter prompt building', () => {
     expect(promptArg.length).toBeGreaterThan(0);
   });
 });
+
+describe('Runtime manifest-level tests', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const createMockProcess = (stdoutData: string = '[{"line": 1, "message": "Test"}]', closeCode: number = 0) => {
+    return {
+      pid: 12345,
+      kill: vi.fn(),
+      stdout: { on: vi.fn((event, cb) => {
+        if (event === 'data') {
+          cb(Buffer.from(stdoutData));
+        }
+      }) },
+      stderr: { on: vi.fn() },
+      stdin: { write: vi.fn(), end: vi.fn() },
+      on: vi.fn((event, cb) => {
+        if (event === 'close') {
+          cb(closeCode, null);
+        }
+      }),
+    };
+  };
+
+  const baseRequest = {
+    code: 'const x = 1;',
+    languageId: 'typescript',
+    filePath: 'test.ts',
+    reviewType: 'file' as const,
+  };
+
+  describe('claude runtime manifest', () => {
+    it('does not pass model when supportsModelOverride is false', async () => {
+      const mockProc = createMockProcess();
+      mockSpawn.mockReturnValue(mockProc);
+
+      const manifest: RuntimeManifest = {
+        id: 'claude',
+        name: 'Claude',
+        executable: 'claude',
+        promptTransport: 'argv',
+        outputFormat: 'text',
+        supportsModelOverride: false,
+        supportsExecutableOverride: true,
+        supportsExtraArgs: true,
+      };
+      const settings = createSettings({ model: 'claude-3-5-sonnet' });
+      const adapter = new CliRuntimeAdapter(manifest, settings);
+
+      await adapter.invoke(baseRequest);
+
+      const spawnArgs = mockSpawn.mock.calls[0];
+      expect(spawnArgs[1]).not.toContain('--model');
+      expect(spawnArgs[1]).not.toContain('claude-3-5-sonnet');
+    });
+
+    it('passes extra args when provided', async () => {
+      const mockProc = createMockProcess();
+      mockSpawn.mockReturnValue(mockProc);
+
+      const manifest: RuntimeManifest = {
+        id: 'claude',
+        name: 'Claude',
+        executable: 'claude',
+        promptTransport: 'argv',
+        outputFormat: 'text',
+        supportsModelOverride: false,
+        supportsExecutableOverride: true,
+        supportsExtraArgs: true,
+      };
+      const settings = createSettings({ extraArgs: ['--verbose'] });
+      const adapter = new CliRuntimeAdapter(manifest, settings);
+
+      await adapter.invoke(baseRequest);
+
+      const spawnArgs = mockSpawn.mock.calls[0];
+      expect(spawnArgs[1]).toContain('--verbose');
+    });
+  });
+
+  describe('copilot runtime manifest', () => {
+    it('does not pass model when supportsModelOverride is false', async () => {
+      const mockProc = createMockProcess();
+      mockSpawn.mockReturnValue(mockProc);
+
+      const manifest: RuntimeManifest = {
+        id: 'copilot',
+        name: 'Copilot',
+        executable: 'copilot',
+        promptTransport: 'argv',
+        outputFormat: 'text',
+        supportsModelOverride: false,
+        supportsExecutableOverride: true,
+        supportsExtraArgs: true,
+      };
+      const settings = createSettings({ model: 'gpt-4' });
+      const adapter = new CliRuntimeAdapter(manifest, settings);
+
+      await adapter.invoke(baseRequest);
+
+      const spawnArgs = mockSpawn.mock.calls[0];
+      expect(spawnArgs[1]).not.toContain('--model');
+    });
+
+    it('passes extra args when provided', async () => {
+      const mockProc = createMockProcess();
+      mockSpawn.mockReturnValue(mockProc);
+
+      const manifest: RuntimeManifest = {
+        id: 'copilot',
+        name: 'Copilot',
+        executable: 'copilot',
+        promptTransport: 'argv',
+        outputFormat: 'text',
+        supportsModelOverride: false,
+        supportsExecutableOverride: true,
+        supportsExtraArgs: true,
+      };
+      const settings = createSettings({ extraArgs: ['--debug'] });
+      const adapter = new CliRuntimeAdapter(manifest, settings);
+
+      await adapter.invoke(baseRequest);
+
+      const spawnArgs = mockSpawn.mock.calls[0];
+      expect(spawnArgs[1]).toContain('--debug');
+    });
+  });
+
+  describe('codex runtime manifest', () => {
+    it('does not pass model when supportsModelOverride is false', async () => {
+      const mockProc = createMockProcess();
+      mockSpawn.mockReturnValue(mockProc);
+
+      const manifest: RuntimeManifest = {
+        id: 'codex',
+        name: 'Codex',
+        executable: 'codex',
+        promptTransport: 'argv',
+        outputFormat: 'text',
+        supportsModelOverride: false,
+        supportsExecutableOverride: true,
+        supportsExtraArgs: true,
+      };
+      const settings = createSettings({ model: 'gpt-4o' });
+      const adapter = new CliRuntimeAdapter(manifest, settings);
+
+      await adapter.invoke(baseRequest);
+
+      const spawnArgs = mockSpawn.mock.calls[0];
+      expect(spawnArgs[1]).not.toContain('--model');
+    });
+
+    it('passes extra args when provided', async () => {
+      const mockProc = createMockProcess();
+      mockSpawn.mockReturnValue(mockProc);
+
+      const manifest: RuntimeManifest = {
+        id: 'codex',
+        name: 'Codex',
+        executable: 'codex',
+        promptTransport: 'argv',
+        outputFormat: 'text',
+        supportsModelOverride: false,
+        supportsExecutableOverride: true,
+        supportsExtraArgs: true,
+      };
+      const settings = createSettings({ extraArgs: ['--verbose'] });
+      const adapter = new CliRuntimeAdapter(manifest, settings);
+
+      await adapter.invoke(baseRequest);
+
+      const spawnArgs = mockSpawn.mock.calls[0];
+      expect(spawnArgs[1]).toContain('--verbose');
+    });
+  });
+
+  describe('gemini runtime manifest', () => {
+    it('uses ndjson output format', async () => {
+      const mockProc = createMockProcess('[{"line": 1, "message": "Test"}]');
+      mockSpawn.mockReturnValue(mockProc);
+
+      const manifest: RuntimeManifest = {
+        id: 'gemini',
+        name: 'Gemini',
+        executable: 'gemini',
+        promptTransport: 'argv',
+        outputFormat: 'ndjson',
+        supportsModelOverride: false,
+        supportsExecutableOverride: true,
+        supportsExtraArgs: true,
+      };
+      const settings = createSettings();
+      const adapter = new CliRuntimeAdapter(manifest, settings);
+
+      const result = await adapter.invoke(baseRequest);
+
+      expect(result.comments).toHaveLength(1);
+    });
+
+    it('does not pass model when supportsModelOverride is false', async () => {
+      const mockProc = createMockProcess();
+      mockSpawn.mockReturnValue(mockProc);
+
+      const manifest: RuntimeManifest = {
+        id: 'gemini',
+        name: 'Gemini',
+        executable: 'gemini',
+        promptTransport: 'argv',
+        outputFormat: 'ndjson',
+        supportsModelOverride: false,
+        supportsExecutableOverride: true,
+        supportsExtraArgs: true,
+      };
+      const settings = createSettings({ model: 'gemini-pro' });
+      const adapter = new CliRuntimeAdapter(manifest, settings);
+
+      await adapter.invoke(baseRequest);
+
+      const spawnArgs = mockSpawn.mock.calls[0];
+      expect(spawnArgs[1]).not.toContain('--model');
+    });
+
+    it('passes extra args when provided', async () => {
+      const mockProc = createMockProcess();
+      mockSpawn.mockReturnValue(mockProc);
+
+      const manifest: RuntimeManifest = {
+        id: 'gemini',
+        name: 'Gemini',
+        executable: 'gemini',
+        promptTransport: 'argv',
+        outputFormat: 'ndjson',
+        supportsModelOverride: false,
+        supportsExecutableOverride: true,
+        supportsExtraArgs: true,
+      };
+      const settings = createSettings({ extraArgs: ['--debug'] });
+      const adapter = new CliRuntimeAdapter(manifest, settings);
+
+      await adapter.invoke(baseRequest);
+
+      const spawnArgs = mockSpawn.mock.calls[0];
+      expect(spawnArgs[1]).toContain('--debug');
+    });
+  });
+
+  describe('hermes runtime manifest', () => {
+    it('does not pass model when supportsModelOverride is false', async () => {
+      const mockProc = createMockProcess();
+      mockSpawn.mockReturnValue(mockProc);
+
+      const manifest: RuntimeManifest = {
+        id: 'hermes',
+        name: 'Hermes',
+        executable: 'hermes',
+        promptTransport: 'argv',
+        outputFormat: 'text',
+        supportsModelOverride: false,
+        supportsExecutableOverride: true,
+        supportsExtraArgs: true,
+      };
+      const settings = createSettings({ model: 'hermes-model' });
+      const adapter = new CliRuntimeAdapter(manifest, settings);
+
+      await adapter.invoke(baseRequest);
+
+      const spawnArgs = mockSpawn.mock.calls[0];
+      expect(spawnArgs[1]).not.toContain('--model');
+    });
+
+    it('passes extra args when provided', async () => {
+      const mockProc = createMockProcess();
+      mockSpawn.mockReturnValue(mockProc);
+
+      const manifest: RuntimeManifest = {
+        id: 'hermes',
+        name: 'Hermes',
+        executable: 'hermes',
+        promptTransport: 'argv',
+        outputFormat: 'text',
+        supportsModelOverride: false,
+        supportsExecutableOverride: true,
+        supportsExtraArgs: true,
+      };
+      const settings = createSettings({ extraArgs: ['--verbose'] });
+      const adapter = new CliRuntimeAdapter(manifest, settings);
+
+      await adapter.invoke(baseRequest);
+
+      const spawnArgs = mockSpawn.mock.calls[0];
+      expect(spawnArgs[1]).toContain('--verbose');
+    });
+  });
+
+  describe('pi runtime manifest', () => {
+    it('does not pass model when supportsModelOverride is false', async () => {
+      const mockProc = createMockProcess();
+      mockSpawn.mockReturnValue(mockProc);
+
+      const manifest: RuntimeManifest = {
+        id: 'pi',
+        name: 'Pi',
+        executable: 'pi',
+        promptTransport: 'argv',
+        outputFormat: 'text',
+        supportsModelOverride: false,
+        supportsExecutableOverride: true,
+        supportsExtraArgs: true,
+      };
+      const settings = createSettings({ model: 'pi-model' });
+      const adapter = new CliRuntimeAdapter(manifest, settings);
+
+      await adapter.invoke(baseRequest);
+
+      const spawnArgs = mockSpawn.mock.calls[0];
+      expect(spawnArgs[1]).not.toContain('--model');
+    });
+
+    it('passes extra args when provided', async () => {
+      const mockProc = createMockProcess();
+      mockSpawn.mockReturnValue(mockProc);
+
+      const manifest: RuntimeManifest = {
+        id: 'pi',
+        name: 'Pi',
+        executable: 'pi',
+        promptTransport: 'argv',
+        outputFormat: 'text',
+        supportsModelOverride: false,
+        supportsExecutableOverride: true,
+        supportsExtraArgs: true,
+      };
+      const settings = createSettings({ extraArgs: ['--debug'] });
+      const adapter = new CliRuntimeAdapter(manifest, settings);
+
+      await adapter.invoke(baseRequest);
+
+      const spawnArgs = mockSpawn.mock.calls[0];
+      expect(spawnArgs[1]).toContain('--debug');
+    });
+  });
+});
