@@ -4,6 +4,7 @@ import { OpenCodeProvider } from './providers/opencode';
 import { GitWatcher } from './gitWatcher';
 import { ReviewOrchestrator } from './reviewOrchestrator';
 import { ProviderConfig } from './providers/modelProvider';
+import { registerSettingsCommands } from './settings';
 
 let commentController: ReviewCommentController;
 let provider: OpenCodeProvider;
@@ -42,6 +43,8 @@ export function activate(context: vscode.ExtensionContext) {
     );
     context.subscriptions.push(gitWatcher);
   }
+
+  registerSettingsCommands(context);
 
   const reviewFileCommand = vscode.commands.registerCommand(
     'reviewmp.reviewFile',

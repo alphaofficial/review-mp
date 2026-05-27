@@ -61,6 +61,22 @@
         "command": "reviewmp.rejectComment",
         "title": "Reject",
         "icon": "$(x)"
+      },
+      {
+        "command": "reviewmp.setApiKey",
+        "title": "ReviewMP: Set API Key"
+      },
+      {
+        "command": "reviewmp.clearApiKey",
+        "title": "ReviewMP: Clear API Key"
+      },
+      {
+        "command": "reviewmp.selectProvider",
+        "title": "ReviewMP: Select Provider"
+      },
+      {
+        "command": "reviewmp.toggleDebug",
+        "title": "ReviewMP: Toggle Debug Mode"
       }
     ],
     "menus": {
@@ -99,6 +115,12 @@
     "configuration": {
       "title": "ReviewMP",
       "properties": {
+        "reviewmp.provider": {
+          "type": "string",
+          "default": "opencode",
+          "enum": ["opencode", "custom-cli", "openai-compatible", "anthropic"],
+          "description": "Provider to use for code reviews"
+        },
         "reviewmp.opencodePath": {
           "type": "string",
           "default": "opencode",
@@ -118,6 +140,26 @@
           "type": "boolean",
           "default": false,
           "description": "Automatically run review before commit (requires pre-commit hook setup)"
+        },
+        "reviewmp.debug": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable debug logging for provider requests and responses"
+        },
+        "reviewmp.customCliCommand": {
+          "type": "string",
+          "default": "",
+          "description": "Custom CLI command to use for reviews (used when provider is custom-cli)"
+        },
+        "reviewmp.customCliArgs": {
+          "type": "string",
+          "default": "",
+          "description": "Additional arguments for custom CLI command"
+        },
+        "reviewmp.openaiCompatibleEndpoint": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI-compatible API endpoint URL (used when provider is openai-compatible)"
         }
       }
     }

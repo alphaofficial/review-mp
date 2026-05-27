@@ -16,5 +16,5 @@ export interface ProviderConfig {
 
 export const DEFAULT_OPENCODE_PROVIDER_NAME = 'opencode';
 
-export const providerNames = ['opencode'] as const;
+export const providerNames = ['opencode', 'custom-cli', 'openai-compatible', 'anthropic'] as const;
 export type ProviderName = (typeof providerNames)[number];
