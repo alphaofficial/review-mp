@@ -84,6 +84,8 @@ function getReviewTypeLabel(reviewType: string): string {
       return 'changes from the last commit';
     case 'branch':
       return 'branch changes compared to base';
+    case 'pullRequest':
+      return 'pull request changes';
     default:
       return 'git changes';
   }

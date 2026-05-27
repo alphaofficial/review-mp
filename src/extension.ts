@@ -111,6 +111,13 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  const reviewPRCommand = vscode.commands.registerCommand(
+    'reviewmp.reviewPR',
+    async () => {
+      await orchestrator.reviewPR();
+    }
+  );
+
   const clearCommentsCommand = vscode.commands.registerCommand(
     'reviewmp.clearComments',
     () => {
@@ -126,6 +133,7 @@ export function activate(context: vscode.ExtensionContext) {
     reviewUncommittedCommand,
     reviewLastCommitCommand,
     reviewBranchCommand,
+    reviewPRCommand,
     clearCommentsCommand,
     commentController
   );

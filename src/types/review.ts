@@ -8,7 +8,7 @@ export interface ReviewComment {
   severity?: Severity;
 }
 
-export type ReviewType = 'file' | 'selection' | 'staged' | 'uncommitted' | 'lastCommit' | 'branch';
+export type ReviewType = 'file' | 'selection' | 'staged' | 'uncommitted' | 'lastCommit' | 'branch' | 'pullRequest';
 
 export interface ReviewRequest {
   code: string;
@@ -17,6 +17,7 @@ export interface ReviewRequest {
   reviewType: ReviewType;
   diff?: string;
   startLine?: number;
+  crossFileContext?: string;
 }
 
 export interface ReviewResult {

@@ -3,6 +3,8 @@ import { ModelProvider } from './providers/modelProvider';
 import { ReviewCommentController, ReviewComment } from './comments';
 import { ReviewRequest } from './types/review';
 import { DiffContextCollector } from './harness/diffContextCollector';
+import { clusterDiff, parseDiffIntoFiles } from './harness/diffClustering';
+import { buildCrossFilePrompt, checkCrossFileConsistency, CrossFileConsistencyResult } from './harness/crossFileConsistencyPass';
 
 export class ReviewOrchestrator implements vscode.Disposable {
   private provider: ModelProvider;
@@ -58,6 +60,10 @@ export class ReviewOrchestrator implements vscode.Disposable {
     await this.reviewGitChanges('branch');
   }
 
+  async reviewPR(): Promise<void> {
+    await this.reviewGitChanges('pullRequest');
+  }
+
   clearComments(): void {
     this.commentController.clearAllComments();
   }
@@ -102,12 +108,13 @@ export class ReviewOrchestrator implements vscode.Disposable {
     );
   }
 
-  private async reviewGitChanges(type: 'staged' | 'uncommitted' | 'lastCommit' | 'branch'): Promise<void> {
+  private async reviewGitChanges(type: 'staged' | 'uncommitted' | 'lastCommit' | 'branch' | 'pullRequest'): Promise<void> {
     const labels: Record<string, string> = {
       staged: 'staged changes',
       uncommitted: 'uncommitted changes',
       lastCommit: 'last commit',
       branch: 'branch changes',
+      pullRequest: 'pull request changes',
     };
 
     await vscode.window.withProgress(
@@ -124,36 +131,167 @@ export class ReviewOrchestrator implements vscode.Disposable {
             return;
           }
 
-          const request: ReviewRequest = {
-            code: '',
-            languageId: '',
-            filePath: '',
-            reviewType: type,
-            diff: diffResult.formattedDiff,
-          };
+          if (type === 'pullRequest') {
+            await this.reviewPullRequest(diffResult.formattedDiff, token);
+          } else {
+            const request: ReviewRequest = {
+              code: '',
+              languageId: '',
+              filePath: '',
+              reviewType: type,
+              diff: diffResult.formattedDiff,
+            };
 
-          const result = await this.provider.review(request, token);
+            const result = await this.provider.review(request, token);
 
-          if (token.isCancellationRequested) {
-            return;
+            if (token.isCancellationRequested) {
+              return;
+            }
+
+            if (result.comments.length === 0) {
+              vscode.window.showInformationMessage('No issues found in the changes');
+              return;
+            }
+
+            await this.addDiffComments(result.comments);
+
+            vscode.window.showInformationMessage(
+              `ReviewMP: Found ${result.comments.length} comment(s) in ${labels[type]}`
+            );
           }
-
-          if (result.comments.length === 0) {
-            vscode.window.showInformationMessage('No issues found in the changes');
-            return;
-          }
-
-          await this.addDiffComments(result.comments);
-
-          vscode.window.showInformationMessage(
-            `ReviewMP: Found ${result.comments.length} comment(s) in ${labels[type]}`
-          );
         } catch (error) {
           if (error instanceof Error) {
             vscode.window.showErrorMessage(`ReviewMP Error: ${error.message}`);
           }
         }
       }
+    );
+  }
+
+  private async reviewPullRequest(formattedDiff: string, token?: vscode.CancellationToken): Promise<void> {
+    const clusteringResult = clusterDiff({ diff: formattedDiff, formattedDiff });
+
+    if (clusteringResult.totalFiles === 0) {
+      vscode.window.showInformationMessage('No changes found in the pull request');
+      return;
+    }
+
+    const allComments: ReviewComment[] = [];
+    const clusterResults: { clusterId: number; comments: ReviewComment[]; files: string[] }[] = [];
+
+    if (clusteringResult.usedFastPath) {
+      const request: ReviewRequest = {
+        code: '',
+        languageId: '',
+        filePath: '',
+        reviewType: 'pullRequest',
+        diff: formattedDiff,
+      };
+
+      const result = await this.provider.review(request, token);
+
+      if (token?.isCancellationRequested) {
+        return;
+      }
+
+      allComments.push(...result.comments);
+      if (clusteringResult.clusters.length > 0) {
+        clusterResults.push({
+          clusterId: 0,
+          comments: result.comments,
+          files: clusteringResult.clusters[0].files,
+        });
+      }
+    } else {
+      const maxParallelClusters = 4;
+      for (let i = 0; i < clusteringResult.clusters.length; i += maxParallelClusters) {
+        if (token?.isCancellationRequested) {
+          return;
+        }
+
+        const clusterBatch = clusteringResult.clusters.slice(i, i + maxParallelClusters);
+        const batchPromises = clusterBatch.map(async (cluster) => {
+          const fileDiffs = parseDiffIntoFiles(formattedDiff);
+          let clusterDiffContent = '';
+          for (const filePath of cluster.files) {
+            const fileDiff = fileDiffs.find(f => f.filePath === filePath);
+            if (fileDiff) {
+              clusterDiffContent += fileDiff.rawDiff + '\n';
+            }
+          }
+
+          const request: ReviewRequest = {
+            code: '',
+            languageId: '',
+            filePath: cluster.files.join(', '),
+            reviewType: 'pullRequest',
+            diff: clusterDiffContent,
+          };
+
+          return this.provider.review(request, token);
+        });
+
+        const batchResults = await Promise.all(batchPromises);
+
+        for (let j = 0; j < clusterBatch.length; j++) {
+          const cluster = clusterBatch[j];
+          const result = batchResults[j];
+          allComments.push(...result.comments);
+          clusterResults.push({
+            clusterId: cluster.id,
+            comments: result.comments,
+            files: cluster.files,
+          });
+        }
+      }
+    }
+
+    if (token?.isCancellationRequested) {
+      return;
+    }
+
+    const crossFilePrompt = buildCrossFilePrompt({
+      diffOutput: formattedDiff,
+      existingComments: allComments,
+    });
+
+    const crossFileRequest: ReviewRequest = {
+      code: '',
+      languageId: '',
+      filePath: '',
+      reviewType: 'pullRequest',
+      diff: undefined,
+      crossFileContext: crossFilePrompt,
+    };
+
+    let crossFileResult: CrossFileConsistencyResult = { comments: [], issuesFound: 0 };
+
+    try {
+      const crossFileReviewResult = await this.provider.review(crossFileRequest, token);
+
+      if (token?.isCancellationRequested) {
+        return;
+      }
+
+      crossFileResult = checkCrossFileConsistency(
+        { diffOutput: formattedDiff, existingComments: allComments },
+        crossFileReviewResult.comments
+      );
+    } catch {
+      // Cross-file review failed, continue with cluster comments only
+    }
+
+    const finalComments = [...allComments, ...crossFileResult.comments];
+
+    if (finalComments.length === 0) {
+      vscode.window.showInformationMessage('No issues found in the pull request');
+      return;
+    }
+
+    await this.addDiffComments(finalComments);
+
+    vscode.window.showInformationMessage(
+      `ReviewMP: Found ${finalComments.length} comment(s) in pull request`
     );
   }
 

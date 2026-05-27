@@ -198,12 +198,12 @@ export class DiffContextCollector {
   }
 
   async getDiff(
-    type: 'staged' | 'uncommitted' | 'lastCommit' | 'branch',
+    type: 'staged' | 'uncommitted' | 'lastCommit' | 'branch' | 'pullRequest',
     token?: vscode.CancellationToken
   ): Promise<DiffResult> {
     let diffCommand: string;
 
-    if (type === 'branch') {
+    if (type === 'branch' || type === 'pullRequest') {
       const baseBranch = await this.detectBaseBranch(token);
       diffCommand = `git diff ${baseBranch}...HEAD`;
     } else {
