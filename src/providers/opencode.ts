@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { spawn, ChildProcess } from 'child_process';
-import { ModelProvider, ProviderConfig } from './modelProvider';
+import { ModelProvider, ProviderConfig, ModelInfo } from './modelProvider';
 import { ReviewRequest, ReviewResult, ReviewComment } from '../types/review';
 import { getOpenCodeMissingErrorMessage, resolveOpenCodePath } from '../opencodePath';
 import { buildFileReviewPrompt, buildSelectionReviewPrompt, buildDiffReviewPrompt, formatDiffWithLineNumbers } from '../harness/prompts';
@@ -34,6 +34,16 @@ export class OpenCodeProvider implements ModelProvider {
 
   isAvailable(): Promise<boolean> {
     return Promise.resolve(true);
+  }
+
+  getMetadata(): ModelInfo {
+    return {
+      providerName: this.name,
+      modelId: this.config.model || 'opencode-default',
+      contextWindow: 200000,
+      supportsStreaming: false,
+      supportsTools: false,
+    };
   }
 
   cancel(): void {

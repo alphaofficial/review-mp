@@ -1,7 +1,34 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { ProviderRegistry } from '../../src/providers/registry';
-import { ModelProvider, DEFAULT_OPENCODE_PROVIDER_NAME } from '../../src/providers/modelProvider';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+vi.mock('vscode', () => ({
+  workspace: {
+    workspaceFolders: [{ uri: { fsPath: '/test/workspace' } }],
+    getConfiguration: vi.fn(() => ({
+      get: vi.fn((key: string, defaultValue: any) => {
+        const config: Record<string, any> = {
+          provider: 'opencode',
+          opencodePath: 'opencode',
+          model: '',
+          autoReviewOnStage: false,
+          autoReviewOnCommit: false,
+          debug: false,
+          customCliCommand: '',
+          customCliArgs: '',
+          openaiCompatibleEndpoint: '',
+        };
+        return config[key] ?? defaultValue;
+      }),
+    })),
+  },
+}));
+
+import { ProviderRegistry, globalRegistry } from '../../src/providers/registry';
+import { ModelProvider, DEFAULT_OPENCODE_PROVIDER_NAME, providerNames, ProviderConfig, ModelInfo, ModelProviderWithMetadata, ProviderEvent, ProviderSettings } from '../../src/providers/modelProvider';
 import { ReviewRequest, ReviewResult, ReviewComment } from '../../src/types/review';
+import { OpenCodeProvider } from '../../src/providers/opencode';
+import { CustomCliProvider } from '../../src/providers/customCli';
+import { OpenAICompatibleProvider } from '../../src/providers/openaiCompatible';
+import { buildProvider } from '../../src/providers/factory';
 
 class MockProvider implements ModelProvider {
   readonly name: string;
@@ -199,5 +226,273 @@ describe('ReviewComment type', () => {
     };
     expect(comment.fix).toBe('const x = 2;');
     expect(comment.severity).toBe('warning');
+  });
+});
+
+describe('ProviderFactory', () => {
+  it('buildProvider function exists', () => {
+    expect(typeof buildProvider).toBe('function');
+  });
+
+  it('creates opencode provider by default', () => {
+    const settings: ProviderSettings = {
+      provider: 'opencode',
+      opencodePath: 'opencode',
+      model: '',
+      autoReviewOnStage: false,
+      autoReviewOnCommit: false,
+      debug: false,
+      customCliCommand: '',
+      customCliArgs: '',
+      openaiCompatibleEndpoint: '',
+    };
+    const provider = buildProvider(settings);
+    expect(provider).toBeInstanceOf(OpenCodeProvider);
+    expect(provider.name).toBe('opencode');
+  });
+
+  it('creates opencode provider when explicitly specified', () => {
+    const settings: ProviderSettings = {
+      provider: 'opencode',
+      opencodePath: '/custom/path/opencode',
+      model: 'gpt-4',
+      autoReviewOnStage: false,
+      autoReviewOnCommit: false,
+      debug: false,
+      customCliCommand: '',
+      customCliArgs: '',
+      openaiCompatibleEndpoint: '',
+    };
+    const provider = buildProvider(settings);
+    expect(provider).toBeInstanceOf(OpenCodeProvider);
+  });
+
+  it('creates custom-cli provider when specified', () => {
+    const settings: ProviderSettings = {
+      provider: 'custom-cli',
+      opencodePath: 'opencode',
+      model: '',
+      autoReviewOnStage: false,
+      autoReviewOnCommit: false,
+      debug: false,
+      customCliCommand: '/usr/bin/my-cli',
+      customCliArgs: '--json',
+      openaiCompatibleEndpoint: '',
+    };
+    const provider = buildProvider(settings);
+    expect(provider).toBeInstanceOf(CustomCliProvider);
+    expect(provider.name).toBe('custom-cli');
+  });
+
+  it('creates openai-compatible provider when specified', () => {
+    const settings: ProviderSettings = {
+      provider: 'openai-compatible',
+      opencodePath: 'opencode',
+      model: '',
+      autoReviewOnStage: false,
+      autoReviewOnCommit: false,
+      debug: false,
+      customCliCommand: '',
+      customCliArgs: '',
+      openaiCompatibleEndpoint: 'https://api.test.com/v1/chat/completions',
+    };
+    const provider = buildProvider(settings);
+    expect(provider).toBeInstanceOf(OpenAICompatibleProvider);
+    expect(provider.name).toBe('openai-compatible');
+  });
+});
+
+describe('ProviderSettings validation', () => {
+  it('throws actionable error when openai-compatible endpoint is missing', () => {
+    const settings: ProviderSettings = {
+      provider: 'openai-compatible',
+      opencodePath: 'opencode',
+      model: '',
+      autoReviewOnStage: false,
+      autoReviewOnCommit: false,
+      debug: false,
+      customCliCommand: '',
+      customCliArgs: '',
+      openaiCompatibleEndpoint: '',
+    };
+    expect(() => buildProvider(settings)).toThrow(/endpoint/i);
+    expect(() => buildProvider(settings)).toThrow(/openai-compatible/i);
+  });
+
+  it('throws actionable error when custom-cli command is missing', () => {
+    const settings: ProviderSettings = {
+      provider: 'custom-cli',
+      opencodePath: 'opencode',
+      model: '',
+      autoReviewOnStage: false,
+      autoReviewOnCommit: false,
+      debug: false,
+      customCliCommand: '',
+      customCliArgs: '',
+      openaiCompatibleEndpoint: '',
+    };
+    expect(() => buildProvider(settings)).toThrow(/command/i);
+    expect(() => buildProvider(settings)).toThrow(/custom-cli|cli/i);
+  });
+
+  it('succeeds for opencode with minimal config', () => {
+    const settings: ProviderSettings = {
+      provider: 'opencode',
+      opencodePath: 'opencode',
+      model: '',
+      autoReviewOnStage: false,
+      autoReviewOnCommit: false,
+      debug: false,
+      customCliCommand: '',
+      customCliArgs: '',
+      openaiCompatibleEndpoint: '',
+    };
+    const provider = buildProvider(settings);
+    expect(provider).toBeDefined();
+    expect(provider.name).toBe('opencode');
+  });
+});
+
+describe('ProviderMetadata', () => {
+  it('ModelInfo interface exists with required fields', () => {
+    const info: ModelInfo = {
+      providerName: 'opencode',
+      modelId: 'opencode-default',
+      contextWindow: 200000,
+      supportsStreaming: false,
+      supportsTools: false,
+    };
+    expect(info.providerName).toBe('opencode');
+    expect(info.modelId).toBe('opencode-default');
+    expect(info.contextWindow).toBe(200000);
+    expect(info.supportsStreaming).toBe(false);
+    expect(info.supportsTools).toBe(false);
+  });
+
+  it('OpenCodeProvider exposes getMetadata method', () => {
+    const provider = new OpenCodeProvider({});
+    expect(typeof provider.getMetadata).toBe('function');
+    const metadata = provider.getMetadata();
+    expect(metadata.providerName).toBe('opencode');
+    expect(metadata.supportsStreaming).toBe(false);
+    expect(metadata.supportsTools).toBe(false);
+  });
+
+  it('CustomCliProvider exposes getMetadata method', () => {
+    const provider = new CustomCliProvider({ command: '/usr/bin/cli' });
+    expect(typeof provider.getMetadata).toBe('function');
+    const metadata = provider.getMetadata();
+    expect(metadata.providerName).toBe('custom-cli');
+  });
+
+  it('OpenAICompatibleProvider exposes getMetadata method', () => {
+    const provider = new OpenAICompatibleProvider({ endpoint: 'https://api.test.com' });
+    expect(typeof provider.getMetadata).toBe('function');
+    const metadata = provider.getMetadata();
+    expect(metadata.providerName).toBe('openai-compatible');
+    expect(metadata.supportsStreaming).toBe(true);
+    expect(metadata.supportsTools).toBe(false);
+  });
+
+  it('provider implements ModelProviderWithMetadata interface', () => {
+    const settings: ProviderSettings = {
+      provider: 'opencode',
+      opencodePath: 'opencode',
+      model: '',
+      autoReviewOnStage: false,
+      autoReviewOnCommit: false,
+      debug: false,
+      customCliCommand: '',
+      customCliArgs: '',
+      openaiCompatibleEndpoint: '',
+    };
+    const provider = buildProvider(settings);
+    const withMetadata = provider as ModelProviderWithMetadata;
+    expect(typeof withMetadata.getMetadata).toBe('function');
+  });
+});
+
+describe('ProviderEvent contract (streaming-ready)', () => {
+  it('ProviderEvent type exists for future streaming support', () => {
+    const event: ProviderEvent = {
+      type: 'progress',
+      message: 'Processing review...',
+    };
+    expect(event.type).toBe('progress');
+    expect(event.message).toBe('Processing review...');
+  });
+
+  it('ProviderEvent supports comment events', () => {
+    const event: ProviderEvent = {
+      type: 'comment',
+      comment: {
+        file: 'test.ts',
+        line: 10,
+        message: 'Issue found',
+      },
+    };
+    expect(event.type).toBe('comment');
+    expect(event.comment?.message).toBe('Issue found');
+  });
+
+  it('ProviderEvent supports usage events', () => {
+    const event: ProviderEvent = {
+      type: 'usage',
+      usage: {
+        inputTokens: 100,
+        outputTokens: 50,
+        totalTokens: 150,
+      },
+    };
+    expect(event.type).toBe('usage');
+    expect(event.usage?.totalTokens).toBe(150);
+  });
+});
+
+describe('Backward compatibility', () => {
+  it('direct OpenCodeProvider instantiation still works', () => {
+    const provider = new OpenCodeProvider({ opencodePath: '/custom/path' });
+    expect(provider.name).toBe('opencode');
+    expect(typeof provider.review).toBe('function');
+    expect(typeof provider.isAvailable).toBe('function');
+    expect(typeof provider.cancel).toBe('function');
+  });
+
+  it('direct CustomCliProvider instantiation still works', () => {
+    const provider = new CustomCliProvider({ command: '/usr/bin/cli' });
+    expect(provider.name).toBe('custom-cli');
+    expect(typeof provider.review).toBe('function');
+    expect(typeof provider.isAvailable).toBe('function');
+    expect(typeof provider.cancel).toBe('function');
+  });
+
+  it('direct OpenAICompatibleProvider instantiation still works', () => {
+    const provider = new OpenAICompatibleProvider({ endpoint: 'https://api.test.com' });
+    expect(provider.name).toBe('openai-compatible');
+    expect(typeof provider.review).toBe('function');
+    expect(typeof provider.isAvailable).toBe('function');
+    expect(typeof provider.cancel).toBe('function');
+  });
+
+  it('ProviderName type still accepts valid provider names', () => {
+    expect(providerNames).toContain('opencode');
+    expect(providerNames).toContain('custom-cli');
+    expect(providerNames).toContain('openai-compatible');
+  });
+
+  it('ProviderConfig interface still works', () => {
+    const config: ProviderConfig = {
+      opencodePath: '/custom/path',
+      model: 'gpt-4',
+    };
+    expect(config.opencodePath).toBe('/custom/path');
+    expect(config.model).toBe('gpt-4');
+  });
+
+  it('globalRegistry is still exported and functional', () => {
+    expect(globalRegistry).toBeDefined();
+    expect(typeof globalRegistry.register).toBe('function');
+    expect(typeof globalRegistry.get).toBe('function');
+    expect(typeof globalRegistry.list).toBe('function');
   });
 });

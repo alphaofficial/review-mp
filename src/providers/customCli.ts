@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { spawn, ChildProcess } from 'child_process';
-import { ModelProvider, ProviderConfig } from './modelProvider';
+import { ModelProvider, ProviderConfig, ModelInfo } from './modelProvider';
 import { ReviewRequest, ReviewResult, ReviewComment } from '../types/review';
 import { getSettings, logDebug } from '../settings';
 import { buildFileReviewPrompt, buildSelectionReviewPrompt, buildDiffReviewPrompt, formatDiffWithLineNumbers } from '../harness/prompts';
@@ -45,6 +45,16 @@ export class CustomCliProvider implements ModelProvider {
   isAvailable(): Promise<boolean> {
     const config = this.getSettings();
     return Promise.resolve((config.command ?? '').trim().length > 0);
+  }
+
+  getMetadata(): ModelInfo {
+    return {
+      providerName: this.name,
+      modelId: this.config.model || 'custom-cli-default',
+      contextWindow: 0,
+      supportsStreaming: false,
+      supportsTools: false,
+    };
   }
 
   cancel(): void {

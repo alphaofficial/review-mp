@@ -1,5 +1,5 @@
 import { CancellationToken } from 'vscode';
-import { ModelProvider, ProviderConfig, ProviderName } from './modelProvider';
+import { ModelProvider, ProviderConfig, ProviderName, ModelInfo } from './modelProvider';
 import { ReviewRequest, ReviewResult, ModelUsage } from '../types/review';
 import { OutputParser } from '../harness/outputParser';
 import { getSettings, logDebug } from '../settings';
@@ -197,6 +197,16 @@ Or return an error:
     const settings = getSettings();
     const endpoint = this.config.endpoint ?? settings.openaiCompatibleEndpoint;
     return !!endpoint && !!this.getApiKey();
+  }
+
+  getMetadata(): ModelInfo {
+    return {
+      providerName: this.name,
+      modelId: this.config.model || 'gpt-4',
+      contextWindow: 128000,
+      supportsStreaming: true,
+      supportsTools: false,
+    };
   }
 
   private buildPrompt(request: ReviewRequest): string {
