@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-export type ProviderType = 'opencode' | 'custom-cli' | 'openai-compatible' | 'anthropic';
+export type ProviderType = 'opencode' | 'custom-cli' | 'openai-compatible';
 
 export interface Settings {
   provider: ProviderType;
@@ -32,7 +32,7 @@ export class SecretStorage {
   }
 
   async getAll(): Promise<Record<ProviderType, string | undefined>> {
-    const providers: ProviderType[] = ['opencode', 'custom-cli', 'openai-compatible', 'anthropic'];
+    const providers: ProviderType[] = ['opencode', 'custom-cli', 'openai-compatible'];
     const result: Record<string, string | undefined> = {};
     for (const provider of providers) {
       result[provider] = await this.storage.get(`${SECRETS_PREFIX}${provider}`);
@@ -90,7 +90,7 @@ export async function registerSettingsCommands(context: vscode.ExtensionContext)
 
   context.subscriptions.push(
     vscode.commands.registerCommand('reviewmp.setApiKey', async () => {
-      const availableProviders: ProviderType[] = ['openai-compatible', 'anthropic', 'custom-cli'];
+      const availableProviders: ProviderType[] = ['openai-compatible', 'custom-cli'];
       const items = availableProviders.map(p => ({ label: p, value: p }));
 
       const selected = await vscode.window.showQuickPick(items, {
@@ -118,7 +118,6 @@ export async function registerSettingsCommands(context: vscode.ExtensionContext)
     vscode.commands.registerCommand('reviewmp.clearApiKey', async () => {
       const items: { label: ProviderType; value: ProviderType }[] = [
         { label: 'openai-compatible', value: 'openai-compatible' },
-        { label: 'anthropic', value: 'anthropic' },
         { label: 'custom-cli', value: 'custom-cli' },
       ];
 
@@ -142,7 +141,6 @@ export async function registerSettingsCommands(context: vscode.ExtensionContext)
         { label: 'OpenCode', value: 'opencode', description: 'Use OpenCode CLI for reviews' },
         { label: 'Custom CLI', value: 'custom-cli', description: 'Use a custom CLI command' },
         { label: 'OpenAI Compatible', value: 'openai-compatible', description: 'Use OpenAI-compatible API' },
-        { label: 'Anthropic', value: 'anthropic', description: 'Use Anthropic API' },
       ];
 
       const selected = await vscode.window.showQuickPick(items, {

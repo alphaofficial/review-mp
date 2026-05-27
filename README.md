@@ -8,7 +8,7 @@ Provider-neutral AI code review for VS Code with inline comments.
 - Review file, selection, staged changes, uncommitted changes, last commit, or branch
 - Accept or reject suggested fixes
 - Auto-review on stage or before commit (optional)
-- **Multi-provider support**: OpenCode, Custom CLI, OpenAI-compatible HTTP, Anthropic
+- **Multi-provider support**: OpenCode, Custom CLI, OpenAI-compatible HTTP
 - Read-only tool execution for safe context gathering
 - Comment validation before placement
 - Bounded review iterations with retry handling
@@ -20,7 +20,6 @@ Provider-neutral AI code review for VS Code with inline comments.
 | `opencode` | Use OpenCode CLI (default, backward compatible) |
 | `custom-cli` | Use a custom CLI command for reviews |
 | `openai-compatible` | Use any OpenAI-compatible HTTP API |
-| `anthropic` | Use Anthropic Messages API |
 
 ## Prerequisites
 
@@ -28,7 +27,6 @@ Provider-neutral AI code review for VS Code with inline comments.
 
 2. **Provider setup** (choose one):
    - **OpenCode**: `npm install -g opencode-ai` and `opencode auth login`
-   - **Anthropic**: API key for Anthropic Messages API
    - **OpenAI-compatible**: API key for your provider
    - **Custom CLI**: Any CLI that accepts prompts and returns JSON
 
@@ -139,8 +137,8 @@ Settings can be configured via:
 Example `settings.json`:
 ```json
 {
-  "reviewmp.provider": "anthropic",
-  "reviewmp.model": "claude-sonnet-4-20250514",
+  "reviewmp.provider": "openai-compatible",
+  "reviewmp.model": "gpt-4o",
   "reviewmp.autoReviewOnStage": true,
   "reviewmp.autoReviewOnCommit": false,
   "reviewmp.debug": false,
@@ -152,7 +150,7 @@ Example `settings.json`:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `reviewmp.provider` | `opencode` | Provider: `opencode`, `custom-cli`, `openai-compatible`, `anthropic` |
+| `reviewmp.provider` | `opencode` | Provider: `opencode`, `custom-cli`, `openai-compatible` |
 | `reviewmp.opencodePath` | `opencode` | Path to OpenCode CLI (when using opencode provider) |
 | `reviewmp.model` | (empty) | Model in `provider/model` format. Leave empty for default. |
 | `reviewmp.autoReviewOnStage` | `false` | Automatically review when files are staged |
@@ -172,15 +170,6 @@ Example `settings.json`:
   "reviewmp.model": "github-copilot/gpt-4o"
 }
 ```
-
-**Anthropic**:
-```json
-{
-  "reviewmp.provider": "anthropic",
-  "reviewmp.model": "claude-sonnet-4-20250514"
-}
-```
-Then run `ReviewMP: Set API Key` to enter your Anthropic API key.
 
 **OpenAI-compatible**:
 ```json
@@ -225,7 +214,7 @@ ReviewMP Command → ReviewOrchestrator → ReviewHarness → Provider → Model
 
 - **ReviewOrchestrator**: Handles commands, progress, and cancellation
 - **ReviewHarness**: Bounded review loop with retry handling
-- **Provider**: Abstraction over OpenCode, CLI, HTTP, or Anthropic
+- **Provider**: Abstraction over OpenCode, CLI, or HTTP
 - **ToolExecutor**: Read-only tools for context gathering
 - **ContextCollector**: Git diff, branch detection, file reading
 

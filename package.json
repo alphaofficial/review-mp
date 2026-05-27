@@ -118,7 +118,7 @@
         "reviewmp.provider": {
           "type": "string",
           "default": "opencode",
-          "enum": ["opencode", "custom-cli", "openai-compatible", "anthropic"],
+          "enum": ["opencode", "custom-cli", "openai-compatible"],
           "description": "Provider to use for code reviews"
         },
         "reviewmp.opencodePath": {
@@ -129,7 +129,7 @@
         "reviewmp.model": {
           "type": "string",
           "default": "",
-          "description": "Model to use for reviews in provider/model format (e.g., github-copilot/gpt-4o, github-copilot/claude-sonnet-4, anthropic/claude-sonnet-4-20250514). Leave empty for default."
+          "description": "Model to use for reviews in provider/model format (e.g., github-copilot/gpt-4o, github-copilot/claude-sonnet-4). Leave empty for default."
         },
         "reviewmp.autoReviewOnStage": {
           "type": "boolean",
