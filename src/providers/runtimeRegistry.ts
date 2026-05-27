@@ -18,6 +18,8 @@ export interface RuntimeManifest {
   supportsModelOverride: boolean;
   supportsExecutableOverride?: boolean;
   supportsExtraArgs?: boolean;
+  prePromptArgs?: string[];
+  modelArgFlag?: string;
 }
 
 export interface NormalizedReviewResult {

@@ -217,6 +217,90 @@ describe('CliRuntimeAdapter process execution', () => {
       expect(spawnArgs[1]).toContain('--debug');
     });
 
+    it('includes prePromptArgs when manifest specifies them', async () => {
+      const mockProc = createMockProcess();
+      mockSpawn.mockReturnValue(mockProc);
+
+      const manifest: RuntimeManifest = {
+        ...createOpencodeManifest(),
+        prePromptArgs: ['run', '--format', 'json'],
+      };
+      const settings = createSettings();
+      const adapter = new CliRuntimeAdapter(manifest, settings);
+
+      const request = {
+        code: 'const x = 1;',
+        languageId: 'typescript',
+        filePath: 'test.ts',
+        reviewType: 'file' as const,
+      };
+
+      await adapter.invoke(request);
+
+      const spawnArgs = mockSpawn.mock.calls[0];
+      expect(spawnArgs[1]).toContain('run');
+      expect(spawnArgs[1]).toContain('--format');
+      expect(spawnArgs[1]).toContain('json');
+    });
+
+    it('includes model arg when manifest supports model override', async () => {
+      const mockProc = createMockProcess();
+      mockSpawn.mockReturnValue(mockProc);
+
+      const manifest: RuntimeManifest = {
+        ...createOpencodeManifest(),
+        supportsModelOverride: true,
+        modelArgFlag: '--model',
+      };
+      const settings = createSettings({ model: 'claude-3-5-sonnet' });
+      const adapter = new CliRuntimeAdapter(manifest, settings);
+
+      const request = {
+        code: 'const x = 1;',
+        languageId: 'typescript',
+        filePath: 'test.ts',
+        reviewType: 'file' as const,
+      };
+
+      await adapter.invoke(request);
+
+      const spawnArgs = mockSpawn.mock.calls[0];
+      expect(spawnArgs[1]).toContain('--model');
+      expect(spawnArgs[1]).toContain('claude-3-5-sonnet');
+    });
+
+    it('builds correct argv with prePromptArgs and model arg', async () => {
+      const mockProc = createMockProcess();
+      mockSpawn.mockReturnValue(mockProc);
+
+      const manifest: RuntimeManifest = {
+        ...createOpencodeManifest(),
+        prePromptArgs: ['run', '--format', 'json'],
+        modelArgFlag: '--model',
+      };
+      const settings = createSettings({ model: 'claude-3-5-sonnet', extraArgs: ['--verbose'] });
+      const adapter = new CliRuntimeAdapter(manifest, settings);
+
+      const request = {
+        code: 'const x = 1;',
+        languageId: 'typescript',
+        filePath: 'test.ts',
+        reviewType: 'file' as const,
+      };
+
+      await adapter.invoke(request);
+
+      const spawnArgs = mockSpawn.mock.calls[0];
+      const argv = spawnArgs[1];
+      expect(argv[0]).toBe('run');
+      expect(argv[1]).toBe('--format');
+      expect(argv[2]).toBe('json');
+      expect(argv[3]).toBe('--model');
+      expect(argv[4]).toBe('claude-3-5-sonnet');
+      expect(argv[5]).toBe('--verbose');
+      expect(argv[6]).toBeDefined();
+    });
+
     it('uses executable override when provided', async () => {
       const mockProc = createMockProcess();
       mockSpawn.mockReturnValue(mockProc);

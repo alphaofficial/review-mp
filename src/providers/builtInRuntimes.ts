@@ -70,6 +70,8 @@ export const builtInRuntimes: RuntimeManifest[] = [
     supportsModelOverride: true,
     supportsExecutableOverride: true,
     supportsExtraArgs: true,
+    prePromptArgs: ['run', '--format', 'json'],
+    modelArgFlag: '--model',
   },
 ];
 

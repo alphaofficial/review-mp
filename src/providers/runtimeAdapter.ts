@@ -148,6 +148,14 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
   private buildArgvArgs(prompt: string): string[] {
     const args: string[] = [];
 
+    if (this.manifest.prePromptArgs && this.manifest.prePromptArgs.length > 0) {
+      args.push(...this.manifest.prePromptArgs);
+    }
+
+    if (this.manifest.supportsModelOverride && this.model && this.manifest.modelArgFlag) {
+      args.push(this.manifest.modelArgFlag, this.model);
+    }
+
     if (this.extraArgs && this.extraArgs.length > 0) {
       args.push(...this.extraArgs);
     }
