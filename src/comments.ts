@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ModelProvider } from './providers/modelProvider';
+import { FixApplicator, createFixApplicator } from './harness/fixApplicator';
 
 export interface ReviewComment {
   file: string;
@@ -21,9 +22,11 @@ export class ReviewCommentController implements vscode.Disposable {
   private threads: Map<string, vscode.CommentThread[]> = new Map();
   private commentDataMap: WeakMap<vscode.Comment, CommentData> = new WeakMap();
   private provider: ModelProvider;
+  private fixApplicator: FixApplicator;
 
-  constructor(context: vscode.ExtensionContext, provider: ModelProvider) {
+  constructor(context: vscode.ExtensionContext, provider: ModelProvider, fixApplicator?: FixApplicator) {
     this.provider = provider;
+    this.fixApplicator = fixApplicator || createFixApplicator();
     this.controller = vscode.comments.createCommentController(
       'reviewmp',
       'ReviewMP Comments'
@@ -122,22 +125,21 @@ export class ReviewCommentController implements vscode.Disposable {
     }
 
     try {
-      await vscode.window.withProgress(
+      const result = await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
           title: 'ReviewMP: Applying fix...',
           cancellable: false,
         },
         async () => {
-          if (this.provider.applyFix) {
-            await this.provider.applyFix(data.uri.fsPath, data.line, data.fix!);
-          } else {
-            throw new Error('Fix application is not supported by the current provider');
-          }
+          return await this.fixApplicator.applyFix(data.uri.fsPath, data.line, data.fix!);
         }
       );
 
-      // Remove the comment thread after successful application
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to apply fix');
+      }
+
       data.thread.dispose();
       this.removeThreadFromMap(data.uri, data.thread);
 

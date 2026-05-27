@@ -4,6 +4,10 @@ import { CancellationToken } from 'vscode';
 export interface ModelProvider {
   readonly name: string;
   review(request: ReviewRequest, token?: CancellationToken): Promise<ReviewResult>;
+  /**
+   * @deprecated Fix application is now handled directly by ReviewMP's FixApplicator.
+   * This method is no longer called by ReviewMP and exists only for backward compatibility.
+   */
   applyFix?(filePath: string, line: number, fix: string, token?: CancellationToken): Promise<void>;
   cancel(): void;
   isAvailable(): Promise<boolean>;
