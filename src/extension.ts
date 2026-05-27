@@ -1,26 +1,67 @@
 import * as vscode from 'vscode';
 import { ReviewCommentController } from './comments';
-import { OpenCodeProvider } from './providers/opencode';
 import { GitWatcher } from './gitWatcher';
 import { ReviewOrchestrator } from './reviewOrchestrator';
-import { ProviderConfig } from './providers/modelProvider';
-import { registerSettingsCommands } from './settings';
+import { ModelProvider, ReviewResult } from './providers/modelProvider';
+import { CliRuntimeAdapter } from './providers/runtimeAdapter';
+import { globalRuntimeRegistry } from './providers/builtInRuntimes';
+import { RuntimeSettings } from './providers/runtimeRegistry';
+import { ReviewRequest } from './types/review';
+import { getSettings } from './settings';
+
+class RuntimeProviderAdapter implements ModelProvider {
+  readonly name: string;
+  private adapter: CliRuntimeAdapter;
+
+  constructor(manifestId: string, settings: RuntimeSettings, workspaceRoot?: string) {
+    const manifest = globalRuntimeRegistry.get(manifestId as any);
+    if (!manifest) {
+      throw new Error(`Runtime manifest not found: ${manifestId}`);
+    }
+    this.name = manifest.name;
+    this.adapter = new CliRuntimeAdapter(manifest, settings, workspaceRoot);
+  }
+
+  async review(request: ReviewRequest, token?: vscode.CancellationToken): Promise<ReviewResult> {
+    const result = await this.adapter.invoke(request, token);
+    return {
+      comments: result.comments,
+      provider: this.name,
+      usage: result.usage,
+    };
+  }
+
+  cancel(): void {
+    this.adapter.cancel();
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return this.adapter.isAvailable();
+  }
+}
 
 let commentController: ReviewCommentController;
-let provider: OpenCodeProvider;
+let provider: ModelProvider;
 let orchestrator: ReviewOrchestrator;
 let gitWatcher: GitWatcher | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('ReviewMP is now active');
 
-  const config = vscode.workspace.getConfiguration('reviewmp');
-  const providerConfig: ProviderConfig = {
-    opencodePath: config.get<string>('opencodePath'),
-    model: config.get<string>('model'),
+  const settings = getSettings();
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+  const runtimeSettings: RuntimeSettings = {
+    runtime: settings.runtime,
+    model: settings.model,
+    debug: settings.debug,
+    autoReviewOnStage: settings.autoReviewOnStage,
+    autoReviewOnCommit: settings.autoReviewOnCommit,
+    executableOverride: settings.executableOverride || undefined,
+    extraArgs: settings.extraArgs ? settings.extraArgs.split(' ').filter(Boolean) : undefined,
   };
 
-  provider = new OpenCodeProvider(providerConfig);
+  provider = new RuntimeProviderAdapter(settings.runtime, runtimeSettings, workspaceRoot);
   commentController = new ReviewCommentController(context, provider);
   orchestrator = new ReviewOrchestrator(provider, commentController);
 
@@ -28,10 +69,7 @@ export function activate(context: vscode.ExtensionContext) {
     gitWatcher.dispose();
   }
 
-  const autoReviewOnStage = config.get<boolean>('autoReviewOnStage', false);
-  const autoReviewOnCommit = config.get<boolean>('autoReviewOnCommit', false);
-
-  if (autoReviewOnStage || autoReviewOnCommit) {
+  if (settings.autoReviewOnStage || settings.autoReviewOnCommit) {
     gitWatcher = new GitWatcher(
       async () => {
         await orchestrator.reviewStaged();
