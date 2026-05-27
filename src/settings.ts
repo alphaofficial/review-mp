@@ -1,59 +1,44 @@
 import * as vscode from 'vscode';
+import { RuntimeId, DEFAULT_RUNTIME_ID } from './providers/runtimeRegistry';
 
 export type ProviderType = 'opencode' | 'custom-cli' | 'openai-compatible';
 
 export interface Settings {
+  runtime: RuntimeId;
   provider: ProviderType;
-  opencodePath: string;
   model: string;
   autoReviewOnStage: boolean;
   autoReviewOnCommit: boolean;
   debug: boolean;
+  opencodePath: string;
   customCliCommand: string;
   customCliArgs: string;
   openaiCompatibleEndpoint: string;
-}
-
-const SECRETS_PREFIX = 'reviewmp:apikey:';
-
-export class SecretStorage {
-  constructor(private storage: vscode.SecretStorage) {}
-
-  async store(provider: ProviderType, apiKey: string): Promise<void> {
-    await this.storage.store(`${SECRETS_PREFIX}${provider}`, apiKey);
-  }
-
-  async get(provider: ProviderType): Promise<string | undefined> {
-    return this.storage.get(`${SECRETS_PREFIX}${provider}`);
-  }
-
-  async delete(provider: ProviderType): Promise<void> {
-    await this.storage.delete(`${SECRETS_PREFIX}${provider}`);
-  }
-
-  async getAll(): Promise<Record<ProviderType, string | undefined>> {
-    const providers: ProviderType[] = ['opencode', 'custom-cli', 'openai-compatible'];
-    const result: Record<string, string | undefined> = {};
-    for (const provider of providers) {
-      result[provider] = await this.storage.get(`${SECRETS_PREFIX}${provider}`);
-    }
-    return result as Record<ProviderType, string | undefined>;
-  }
+  executableOverride: string;
+  extraArgs: string;
 }
 
 export function getSettings(): Settings {
   const config = vscode.workspace.getConfiguration('reviewmp');
   return {
+    runtime: config.get<RuntimeId>('runtime', DEFAULT_RUNTIME_ID),
     provider: config.get<ProviderType>('provider', 'opencode'),
-    opencodePath: config.get<string>('opencodePath', 'opencode'),
     model: config.get<string>('model', ''),
     autoReviewOnStage: config.get<boolean>('autoReviewOnStage', false),
     autoReviewOnCommit: config.get<boolean>('autoReviewOnCommit', false),
     debug: config.get<boolean>('debug', false),
+    opencodePath: config.get<string>('opencodePath', 'opencode'),
     customCliCommand: config.get<string>('customCliCommand', ''),
     customCliArgs: config.get<string>('customCliArgs', ''),
     openaiCompatibleEndpoint: config.get<string>('openaiCompatibleEndpoint', ''),
+    executableOverride: config.get<string>('executableOverride', ''),
+    extraArgs: config.get<string>('extraArgs', ''),
   };
+}
+
+export async function setRuntime(runtime: RuntimeId): Promise<void> {
+  const config = vscode.workspace.getConfiguration('reviewmp');
+  await config.update('runtime', runtime, vscode.ConfigurationTarget.Global);
 }
 
 export async function setProvider(provider: ProviderType): Promise<void> {
@@ -82,6 +67,34 @@ export function logDebug(message: string, ...data: unknown[]): void {
     }
   } catch {
     // Safe to ignore - VS Code API not available in test environments
+  }
+}
+
+export class SecretStorage {
+  constructor(private storage: vscode.SecretStorage) {}
+
+  async store(provider: ProviderType, apiKey: string): Promise<void> {
+    const SECRETS_PREFIX = 'reviewmp:apikey:';
+    await this.storage.store(`${SECRETS_PREFIX}${provider}`, apiKey);
+  }
+
+  async get(provider: ProviderType): Promise<string | undefined> {
+    const SECRETS_PREFIX = 'reviewmp:apikey:';
+    return this.storage.get(`${SECRETS_PREFIX}${provider}`);
+  }
+
+  async delete(provider: ProviderType): Promise<void> {
+    const SECRETS_PREFIX = 'reviewmp:apikey:';
+    await this.storage.delete(`${SECRETS_PREFIX}${provider}`);
+  }
+
+  async getAll(): Promise<Record<ProviderType, string | undefined>> {
+    const providers: ProviderType[] = ['opencode', 'custom-cli', 'openai-compatible'];
+    const result: Record<string, string | undefined> = {};
+    for (const provider of providers) {
+      result[provider] = await this.storage.get(`reviewmp:apikey:${provider}`);
+    }
+    return result as Record<ProviderType, string | undefined>;
   }
 }
 
@@ -150,6 +163,30 @@ export async function registerSettingsCommands(context: vscode.ExtensionContext)
       if (selected) {
         await setProvider(selected.value);
         vscode.window.showInformationMessage(`Provider set to ${selected.value}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('reviewmp.selectRuntime', async () => {
+      const settings = getSettings();
+      const items: { label: string; value: RuntimeId; description: string }[] = [
+        { label: 'Claude', value: 'claude', description: 'Use Claude for reviews' },
+        { label: 'Copilot', value: 'copilot', description: 'Use GitHub Copilot for reviews' },
+        { label: 'Codex', value: 'codex', description: 'Use Codex for reviews' },
+        { label: 'Gemini', value: 'gemini', description: 'Use Gemini for reviews' },
+        { label: 'Hermes', value: 'hermes', description: 'Use Hermes for reviews' },
+        { label: 'Pi', value: 'pi', description: 'Use Pi for reviews' },
+        { label: 'OpenCode', value: 'opencode', description: 'Use OpenCode CLI for reviews' },
+      ];
+
+      const selected = await vscode.window.showQuickPick(items, {
+        placeHolder: `Current runtime: ${settings.runtime}`,
+      });
+
+      if (selected) {
+        await setRuntime(selected.value);
+        vscode.window.showInformationMessage(`Runtime set to ${selected.value}`);
       }
     })
   );

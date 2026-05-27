@@ -63,16 +63,8 @@
         "icon": "$(x)"
       },
       {
-        "command": "reviewmp.setApiKey",
-        "title": "ReviewMP: Set API Key"
-      },
-      {
-        "command": "reviewmp.clearApiKey",
-        "title": "ReviewMP: Clear API Key"
-      },
-      {
-        "command": "reviewmp.selectProvider",
-        "title": "ReviewMP: Select Provider"
+        "command": "reviewmp.selectRuntime",
+        "title": "ReviewMP: Select Runtime"
       },
       {
         "command": "reviewmp.toggleDebug",
@@ -115,21 +107,16 @@
     "configuration": {
       "title": "ReviewMP",
       "properties": {
-        "reviewmp.provider": {
+        "reviewmp.runtime": {
           "type": "string",
           "default": "opencode",
-          "enum": ["opencode", "custom-cli", "openai-compatible"],
-          "description": "Provider to use for code reviews"
-        },
-        "reviewmp.opencodePath": {
-          "type": "string",
-          "default": "opencode",
-          "description": "Path to the OpenCode CLI executable"
+          "enum": ["claude", "copilot", "codex", "gemini", "hermes", "pi", "opencode"],
+          "description": "Runtime to use for code reviews"
         },
         "reviewmp.model": {
           "type": "string",
           "default": "",
-          "description": "Model to use for reviews in provider/model format (e.g., github-copilot/gpt-4o, github-copilot/claude-sonnet-4). Leave empty for default."
+          "description": "Model to use for reviews. Leave empty for runtime default. Format varies by runtime."
         },
         "reviewmp.autoReviewOnStage": {
           "type": "boolean",
@@ -144,22 +131,17 @@
         "reviewmp.debug": {
           "type": "boolean",
           "default": false,
-          "description": "Enable debug logging for provider requests and responses"
+          "description": "Enable debug logging for runtime requests and responses"
         },
-        "reviewmp.customCliCommand": {
+        "reviewmp.executableOverride": {
           "type": "string",
           "default": "",
-          "description": "Custom CLI command to use for reviews (used when provider is custom-cli)"
+          "description": "Override the default executable path for the selected runtime"
         },
-        "reviewmp.customCliArgs": {
+        "reviewmp.extraArgs": {
           "type": "string",
           "default": "",
-          "description": "Additional arguments for custom CLI command"
-        },
-        "reviewmp.openaiCompatibleEndpoint": {
-          "type": "string",
-          "default": "",
-          "description": "OpenAI-compatible API endpoint URL (used when provider is openai-compatible)"
+          "description": "Additional arguments to pass to the runtime executable"
         }
       }
     }
