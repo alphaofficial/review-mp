@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ToolRequest, ToolResult } from '../types/review';
+import { logToolError, logToolWarning } from './diagnostics';
 
 export type ToolName = 'read_file' | 'search_workspace' | 'list_related_files' | 'git_diff' | 'git_log' | 'package_metadata';
 
@@ -40,16 +41,21 @@ export class ToolExecutor {
   }
 
   async execute(request: ToolRequest, token?: vscode.CancellationToken): Promise<ToolResult> {
+    const toolContext = { tool: request.tool };
+
     if (!this.isAllowedTool(request.tool)) {
+      const error = `Unknown tool: ${request.tool}. Allowed tools: ${this.allowedTools.join(', ')}`;
+      logToolError(request.tool, 'Unknown tool requested', error, toolContext);
       return {
         tool: request.tool,
         result: null,
-        error: `Unknown tool: ${request.tool}. Allowed tools: ${this.allowedTools.join(', ')}`,
+        error,
       };
     }
 
     try {
       if (token?.isCancellationRequested) {
+        logToolWarning(request.tool, 'Tool execution cancelled', toolContext);
         return {
           tool: request.tool,
           result: null,
@@ -59,17 +65,17 @@ export class ToolExecutor {
 
       switch (request.tool) {
         case 'read_file':
-          return this.readFile(request.args);
+          return this.readFile(request.args, toolContext);
         case 'search_workspace':
-          return this.searchWorkspace(request.args);
+          return this.searchWorkspace(request.args, toolContext);
         case 'list_related_files':
-          return this.listRelatedFiles(request.args);
+          return this.listRelatedFiles(request.args, toolContext);
         case 'git_diff':
-          return this.gitDiff(request.args, token);
+          return this.gitDiff(request.args, token, toolContext);
         case 'git_log':
-          return this.gitLog(request.args, token);
+          return this.gitLog(request.args, token, toolContext);
         case 'package_metadata':
-          return this.packageMetadata();
+          return this.packageMetadata(toolContext);
         default:
           return {
             tool: request.tool,
@@ -78,10 +84,12 @@ export class ToolExecutor {
           };
       }
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logToolError(request.tool, 'Tool execution threw exception', errorMessage, toolContext);
       return {
         tool: request.tool,
         result: null,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage,
       };
     }
   }
@@ -98,25 +106,31 @@ export class ToolExecutor {
     return results;
   }
 
-  private readFile(args: Record<string, unknown>): ToolResult {
+  private readFile(args: Record<string, unknown>, context: { tool: string }): ToolResult {
     const filePath = args.path as string;
     if (!filePath) {
-      return { tool: 'read_file', result: null, error: 'Missing required parameter: path' };
+      const error = 'Missing required parameter: path';
+      logToolError('read_file', error, error, context);
+      return { tool: 'read_file', result: null, error };
     }
 
     const fullPath = this.resolvePath(filePath);
 
     if (!this.isWithinWorkspace(fullPath)) {
-      return { tool: 'read_file', result: null, error: 'Path outside workspace' };
+      const error = 'Path outside workspace';
+      logToolError('read_file', error, error, context);
+      return { tool: 'read_file', result: null, error };
     }
 
     try {
       const stats = fs.statSync(fullPath);
       if (stats.size > this.maxFileReadSize) {
+        const error = `File too large: ${stats.size} bytes (max: ${this.maxFileReadSize})`;
+        logToolError('read_file', 'File size exceeded limit', error, context);
         return {
           tool: 'read_file',
           result: null,
-          error: `File too large: ${stats.size} bytes (max: ${this.maxFileReadSize})`,
+          error,
         };
       }
 
@@ -131,18 +145,22 @@ export class ToolExecutor {
         },
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logToolError('read_file', 'Failed to read file', errorMessage, context);
       return {
         tool: 'read_file',
         result: null,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage,
       };
     }
   }
 
-  private async searchWorkspace(args: Record<string, unknown>): Promise<ToolResult> {
+  private async searchWorkspace(args: Record<string, unknown>, context: { tool: string }): Promise<ToolResult> {
     const pattern = args.pattern as string;
     if (!pattern) {
-      return { tool: 'search_workspace', result: null, error: 'Missing required parameter: pattern' };
+      const error = 'Missing required parameter: pattern';
+      logToolError('search_workspace', error, error, context);
+      return { tool: 'search_workspace', result: null, error };
     }
 
     try {
@@ -163,24 +181,30 @@ export class ToolExecutor {
         },
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logToolError('search_workspace', 'Search workspace failed', errorMessage, context);
       return {
         tool: 'search_workspace',
         result: null,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage,
       };
     }
   }
 
-  private listRelatedFiles(args: Record<string, unknown>): ToolResult {
+  private listRelatedFiles(args: Record<string, unknown>, context: { tool: string }): ToolResult {
     const filePath = args.filePath as string;
     if (!filePath) {
-      return { tool: 'list_related_files', result: null, error: 'Missing required parameter: filePath' };
+      const error = 'Missing required parameter: filePath';
+      logToolError('list_related_files', error, error, context);
+      return { tool: 'list_related_files', result: null, error };
     }
 
     const fullPath = this.resolvePath(filePath);
 
     if (!this.isWithinWorkspace(fullPath)) {
-      return { tool: 'list_related_files', result: null, error: 'Path outside workspace' };
+      const error = 'Path outside workspace';
+      logToolError('list_related_files', error, error, context);
+      return { tool: 'list_related_files', result: null, error };
     }
 
     try {
@@ -214,10 +238,12 @@ export class ToolExecutor {
         },
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logToolError('list_related_files', 'Failed to list related files', errorMessage, context);
       return {
         tool: 'list_related_files',
         result: null,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage,
       };
     }
   }
@@ -239,7 +265,7 @@ export class ToolExecutor {
     return Object.values(relatedExtensions).some(exts => exts.includes(ext));
   }
 
-  private async gitDiff(args: Record<string, unknown>, token?: vscode.CancellationToken): Promise<ToolResult> {
+  private async gitDiff(args: Record<string, unknown>, token?: vscode.CancellationToken, context: { tool: string } = { tool: 'git_diff' }): Promise<ToolResult> {
     const target = args.target as string | undefined;
     const base = args.base as string | undefined;
 
@@ -262,15 +288,17 @@ export class ToolExecutor {
         },
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logToolError('git_diff', 'Git diff failed', errorMessage, context);
       return {
         tool: 'git_diff',
         result: null,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage,
       };
     }
   }
 
-  private async gitLog(args: Record<string, unknown>, token?: vscode.CancellationToken): ToolResult {
+  private async gitLog(args: Record<string, unknown>, token?: vscode.CancellationToken, context: { tool: string } = { tool: 'git_log' }): ToolResult {
     const filePath = args.file as string | undefined;
     const maxCount = Math.min(
       (args.maxCount as number) || this.maxGitLogEntries,
@@ -282,7 +310,9 @@ export class ToolExecutor {
       if (filePath) {
         const fullPath = this.resolvePath(filePath);
         if (!this.isWithinWorkspace(fullPath)) {
-          return { tool: 'git_log', result: null, error: 'Path outside workspace' };
+          const error = 'Path outside workspace';
+          logToolError('git_log', error, error, context);
+          return { tool: 'git_log', result: null, error };
         }
         argsList.push('--', fullPath);
       }
@@ -314,24 +344,30 @@ export class ToolExecutor {
         },
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logToolError('git_log', 'Git log failed', errorMessage, context);
       return {
         tool: 'git_log',
         result: null,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage,
       };
     }
   }
 
-  private packageMetadata(): ToolResult {
+  private packageMetadata(context: { tool: string } = { tool: 'package_metadata' }): ToolResult {
     const packageJsonPath = path.join(this.workspaceRoot, 'package.json');
 
     if (!this.isWithinWorkspace(packageJsonPath)) {
-      return { tool: 'package_metadata', result: null, error: 'Path outside workspace' };
+      const error = 'Path outside workspace';
+      logToolError('package_metadata', error, error, context);
+      return { tool: 'package_metadata', result: null, error };
     }
 
     try {
       if (!fs.existsSync(packageJsonPath)) {
-        return { tool: 'package_metadata', result: null, error: 'package.json not found' };
+        const error = 'package.json not found';
+        logToolError('package_metadata', error, error, context);
+        return { tool: 'package_metadata', result: null, error };
       }
 
       const content = fs.readFileSync(packageJsonPath, 'utf-8');
@@ -355,10 +391,12 @@ export class ToolExecutor {
         result: relevantFields,
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logToolError('package_metadata', 'Failed to read package.json', errorMessage, context);
       return {
         tool: 'package_metadata',
         result: null,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage,
       };
     }
   }

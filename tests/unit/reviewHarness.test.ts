@@ -4,6 +4,7 @@ import { ModelProvider, ProviderConfig } from '../../src/providers/modelProvider
 import { ReviewRequest, ReviewResult, ReviewComment } from '../../src/types/review';
 import { CommentValidator } from '../../src/harness/commentValidator';
 import { OutputParser } from '../../src/harness/outputParser';
+import * as diagnostics from '../../src/harness/diagnostics';
 
 const createMockWorkspaceFolder = (): any => {
   return { fsPath: '/Users/testuser/project' };
@@ -281,6 +282,7 @@ describe('DefaultIterationStrategy', () => {
 
     expect(strategy.maxIterations).toBe(3);
     expect(strategy.convergenceThreshold).toBe(0.1);
+    expect(strategy.retryOnInvalidOutput).toBe(true);
   });
 
   it('should accept custom values', () => {
@@ -288,6 +290,12 @@ describe('DefaultIterationStrategy', () => {
 
     expect(strategy.maxIterations).toBe(5);
     expect(strategy.convergenceThreshold).toBe(0.2);
+  });
+
+  it('should accept retryOnInvalidOutput option', () => {
+    const strategy = new DefaultIterationStrategy(3, 0.1, false);
+
+    expect(strategy.retryOnInvalidOutput).toBe(false);
   });
 });
 
@@ -318,5 +326,208 @@ describe('createReviewHarness', () => {
     );
 
     expect(harness).toBeInstanceOf(ReviewHarness);
+  });
+});
+
+describe('Retry and Diagnostic Features', () => {
+  describe('maxIterationsReached', () => {
+    it('should set maxIterationsReached true when max iterations reached', async () => {
+      let callCount = 0;
+      const mockProvider: ModelProvider = {
+        name: 'mock',
+        review: vi.fn().mockImplementation(async () => {
+          callCount++;
+          return {
+            comments: [{ file: 'src/test.ts', line: callCount, message: `Error ${callCount}` }],
+            provider: 'mock',
+          };
+        }),
+        cancel: vi.fn(),
+        isAvailable: vi.fn().mockResolvedValue(true),
+      };
+
+      const harness = new ReviewHarness({
+        strategy: new DefaultIterationStrategy(3, 0.1),
+        provider: mockProvider,
+        validator: createMockValidator(),
+        parser: createMockParser(),
+        workspaceRoot: '/Users/testuser/project',
+      });
+
+      const result = await harness.runReview(createFileRequest());
+
+      expect(result.maxIterationsReached).toBe(true);
+    });
+
+    it('should set maxIterationsReached false when converged early', async () => {
+      const mockProvider = createMockProvider([
+        {
+          comments: [
+            { file: 'src/test.ts', line: 1, message: 'Error 1' },
+          ],
+          provider: 'mock',
+        },
+        { comments: [], provider: 'mock' },
+      ]);
+
+      const harness = new ReviewHarness({
+        strategy: new DefaultIterationStrategy(3, 0.1),
+        provider: mockProvider,
+        validator: createMockValidator(),
+        parser: createMockParser(),
+        workspaceRoot: '/Users/testuser/project',
+      });
+
+      const result = await harness.runReview(createFileRequest());
+
+      expect(result.maxIterationsReached).toBe(false);
+    });
+  });
+
+  describe('retryOnInvalidOutput', () => {
+    it('should include retryPrompt when validation issues exist with retry enabled', async () => {
+      const mockValidator: CommentValidator = {
+        validate: vi.fn().mockReturnValue({
+          validComments: [],
+          issues: [{
+            type: 'invalid_severity' as const,
+            message: 'Invalid severity',
+            originalComment: { file: 'src/test.ts', line: 1, message: 'Error 1' },
+          }],
+        }),
+      } as any;
+
+      const mockProvider = createMockProvider([
+        {
+          comments: [{ file: 'src/test.ts', line: 1, message: 'Error 1', severity: 'bad' as any }],
+          provider: 'mock',
+        },
+        { comments: [], provider: 'mock' },
+      ]);
+
+      const harness = new ReviewHarness({
+        strategy: new DefaultIterationStrategy(2, 0.1, true),
+        provider: mockProvider,
+        validator: mockValidator,
+        parser: createMockParser(),
+        workspaceRoot: '/Users/testuser/project',
+      });
+
+      const result = await harness.runReview(createFileRequest());
+
+      expect(result.iterations[0].retryPrompt).toBeDefined();
+      expect(result.iterations[0].retryPrompt).toContain('Validation issues found');
+    });
+
+    it('should not retry when retryOnInvalidOutput is false', async () => {
+      let callCount = 0;
+      const mockProvider: ModelProvider = {
+        name: 'mock',
+        review: vi.fn().mockImplementation(async () => {
+          callCount++;
+          return {
+            comments: [{ file: 'src/test.ts', line: 1, message: `Error ${callCount}` }],
+            provider: 'mock',
+          };
+        }),
+        cancel: vi.fn(),
+        isAvailable: vi.fn().mockResolvedValue(true),
+      };
+
+      const harness = new ReviewHarness({
+        strategy: new DefaultIterationStrategy(3, 0.1, false),
+        provider: mockProvider,
+        validator: createMockValidator(),
+        parser: createMockParser(),
+        workspaceRoot: '/Users/testuser/project',
+      });
+
+      const result = await harness.runReview(createFileRequest());
+
+      expect(result.totalIterations).toBe(3);
+      expect(mockProvider.review).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  describe('validationIssues tracking', () => {
+    it('should track validation issues in iteration result', async () => {
+      const mockValidator: CommentValidator = {
+        validate: vi.fn().mockReturnValue({
+          validComments: [],
+          issues: [{
+            type: 'invalid_severity' as const,
+            message: 'Invalid severity: bad-severity. Valid values are: error, warning, info, suggestion',
+            originalComment: { file: 'src/test.ts', line: 1, message: 'Error 1' },
+          }],
+        }),
+      } as any;
+
+      const mockProvider = createMockProvider([
+        {
+          comments: [
+            { file: 'src/test.ts', line: 1, message: 'Error 1', severity: 'bad-severity' as any },
+          ],
+          provider: 'mock',
+        },
+      ]);
+
+      const harness = new ReviewHarness({
+        strategy: new DefaultIterationStrategy(1, 0.1),
+        provider: mockProvider,
+        validator: mockValidator,
+        parser: createMockParser(),
+        workspaceRoot: '/Users/testuser/project',
+      });
+
+      const result = await harness.runReview(createFileRequest());
+
+      expect(result.iterations[0].validationIssues.length).toBeGreaterThan(0);
+      expect(result.iterations[0].validationIssues[0].type).toBe('invalid_severity');
+    });
+  });
+});
+
+describe('diagnostics module', () => {
+  it('should set debug enabled', () => {
+    diagnostics.setDebugEnabled(true);
+    expect(diagnostics).toBeDefined();
+  });
+
+  it('should format validation issues', () => {
+    const issues = [
+      {
+        type: 'invalid_file',
+        message: 'Invalid file',
+        originalComment: { file: 'test.ts', line: 1, message: 'Test' },
+      },
+    ];
+    const formatted = diagnostics.formatValidationIssues(issues);
+    expect(formatted).toHaveLength(1);
+    expect(formatted[0].type).toBe('invalid_file');
+    expect(formatted[0].affectedLine).toBe(1);
+    expect(formatted[0].affectedFile).toBe('test.ts');
+  });
+
+  it('should sanitize sensitive data in logging', () => {
+    const sensitiveData = {
+      apiKey: 'secret-key-123',
+      token: 'token-456',
+      secret: 'secret-value',
+      password: 'password-789',
+      data: 'safe-data',
+    };
+    const sanitized = diagnostics.sanitizeForLogging(sensitiveData) as Record<string, unknown>;
+    expect(sanitized.apiKey).toBe('[REDACTED]');
+    expect(sanitized.token).toBe('[REDACTED]');
+    expect(sanitized.secret).toBe('[REDACTED]');
+    expect(sanitized.password).toBe('password-789');
+    expect(sanitized.data).toBe('safe-data');
+  });
+
+  it('should truncate long strings in sanitization', () => {
+    const longString = 'a'.repeat(600);
+    const result = diagnostics.sanitizeForLogging(longString) as string;
+    expect(result).toHaveLength(503);
+    expect(result.endsWith('...')).toBe(true);
   });
 });

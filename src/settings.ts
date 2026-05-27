@@ -74,10 +74,14 @@ export async function toggleDebug(): Promise<boolean> {
 }
 
 export function logDebug(message: string, ...data: unknown[]): void {
-  const settings = getSettings();
-  if (settings.debug) {
-    const timestamp = new Date().toISOString();
-    console.log(`[ReviewMP DEBUG ${timestamp}]`, message, ...data);
+  try {
+    const settings = getSettings();
+    if (settings.debug) {
+      const timestamp = new Date().toISOString();
+      console.log(`[ReviewMP DEBUG ${timestamp}]`, message, ...data);
+    }
+  } catch {
+    // Safe to ignore - VS Code API not available in test environments
   }
 }
 
