@@ -37,9 +37,9 @@ export class OutputParser {
 
     const extractedText = this.extractTextFromNdJson(output);
 
-    if (this.containsToolRequests(extractedText)) {
+    if (this.containsToolRequests(output)) {
       result.hasToolRequests = true;
-      result.toolRequests = this.extractToolRequests(extractedText);
+      result.toolRequests = this.extractToolRequests(output);
     }
 
     if (extractedText.startsWith('[') || extractedText.startsWith('{')) {
@@ -117,9 +117,9 @@ export class OutputParser {
 
     const extractedText = this.extractTextFromNdJson(output);
 
-    if (this.containsToolRequests(extractedText)) {
+    if (this.containsToolRequests(output)) {
       result.hasToolRequests = true;
-      result.toolRequests = this.extractToolRequests(extractedText);
+      result.toolRequests = this.extractToolRequests(output);
     }
 
     if (extractedText.startsWith('[') || extractedText.startsWith('{')) {
@@ -229,6 +229,8 @@ export class OutputParser {
         const event = JSON.parse(line);
         if (event.type === 'text' && event.part?.text) {
           collectedText += event.part.text;
+        } else if (Array.isArray(event) || (typeof event === 'object' && event !== null && !('type' in event))) {
+          collectedText += line;
         }
       } catch {
         collectedText += line;
@@ -314,36 +316,49 @@ export class OutputParser {
         let depth = 0;
         let inString = false;
         let escaped = false;
-        for (let j = i; j < text.length; j++) {
+        let j = i;
+        while (j < text.length) {
           const char = text[j];
           if (escaped) {
             escaped = false;
+            j++;
             continue;
           }
           if (char === '\\') {
             escaped = true;
+            j++;
             continue;
           }
           if (char === '"') {
             inString = !inString;
+            j++;
             continue;
           }
           if (!inString) {
-            if (char === '[') depth++;
-            if (char === ']') depth--;
-            if (depth === 0 && j > i) {
-              const candidate = text.substring(i, j + 1);
-              try {
-                const parsed = JSON.parse(candidate);
-                if (Array.isArray(parsed) && candidate.length > bestMatchLength) {
-                  bestMatch = candidate;
-                  bestMatchLength = candidate.length;
+            if (char === '[') {
+              depth++;
+              j++;
+            } else if (char === ']') {
+              depth--;
+              if (depth === 0) {
+                const candidate = text.substring(i, j + 1);
+                try {
+                  const parsed = JSON.parse(candidate);
+                  if (Array.isArray(parsed) && candidate.length > bestMatchLength) {
+                    bestMatch = candidate;
+                    bestMatchLength = candidate.length;
+                  }
+                } catch {
+                  // Not valid JSON
                 }
-              } catch {
-                // Not valid JSON
+                break;
               }
-              break;
+              j++;
+            } else {
+              j++;
             }
+          } else {
+            j++;
           }
         }
       }
@@ -391,36 +406,49 @@ export class OutputParser {
         let depth = 0;
         let inString = false;
         let escaped = false;
-        for (let j = i; j < text.length; j++) {
+        let j = i;
+        while (j < text.length) {
           const char = text[j];
           if (escaped) {
             escaped = false;
+            j++;
             continue;
           }
           if (char === '\\') {
             escaped = true;
+            j++;
             continue;
           }
           if (char === '"') {
             inString = !inString;
+            j++;
             continue;
           }
           if (!inString) {
-            if (char === '[') depth++;
-            if (char === ']') depth--;
-            if (depth === 0 && j > i) {
-              const candidate = text.substring(i, j + 1);
-              try {
-                const parsed = JSON.parse(candidate);
-                if (Array.isArray(parsed) && candidate.length > bestMatchLength) {
-                  bestMatch = candidate;
-                  bestMatchLength = candidate.length;
+            if (char === '[') {
+              depth++;
+              j++;
+            } else if (char === ']') {
+              depth--;
+              if (depth === 0) {
+                const candidate = text.substring(i, j + 1);
+                try {
+                  const parsed = JSON.parse(candidate);
+                  if (Array.isArray(parsed) && candidate.length > bestMatchLength) {
+                    bestMatch = candidate;
+                    bestMatchLength = candidate.length;
+                  }
+                } catch {
+                  // Not valid JSON
                 }
-              } catch {
-                // Not valid JSON
+                break;
               }
-              break;
+              j++;
+            } else {
+              j++;
             }
+          } else {
+            j++;
           }
         }
       }
@@ -553,6 +581,8 @@ export function extractTextFromNdJson(output: string): string {
       const event = JSON.parse(line);
       if (event.type === 'text' && event.part?.text) {
         collectedText += event.part.text;
+      } else if (Array.isArray(event) || (typeof event === 'object' && event !== null && !('type' in event))) {
+        collectedText += line;
       }
     } catch {
       collectedText += line;
