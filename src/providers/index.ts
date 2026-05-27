@@ -5,4 +5,7 @@ export { OpenCodeProvider } from './opencode';
 export { OpenAICompatibleProvider, OpenAICompatibleConfig } from './openaiCompatible';
 export { CustomCliProvider, CliOutputMode, CustomCliConfig } from './customCli';
 export { buildProvider, createProviderFromConfig } from './factory';
+export { builtInRuntimes, createBuiltInRegistry, globalRuntimeRegistry } from './builtInRuntimes';
+export type { RuntimeId, RuntimeManifest, RuntimeAdapter, RuntimeSettings, PromptTransport, OutputFormat } from './runtimeRegistry';
+export { RuntimeRegistry } from './runtimeRegistry';
 

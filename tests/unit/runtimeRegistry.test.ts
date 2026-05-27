@@ -3,6 +3,7 @@ import { RuntimeId, RuntimeManifest, RuntimeAdapter, RuntimeRegistry, runtimeIds
 import { RuntimeSettings } from '../../src/providers/runtimeRegistry';
 import { NormalizedReviewResult } from '../../src/providers/runtimeRegistry';
 import { ReviewRequest, ReviewComment } from '../../src/types/review';
+import { builtInRuntimes, createBuiltInRegistry, globalRuntimeRegistry } from '../../src/providers/builtInRuntimes';
 
 describe('RuntimeId type', () => {
   it('runtimeIds array contains all supported runtime identifiers', () => {
@@ -392,5 +393,115 @@ describe('RuntimeSettings type', () => {
 describe('DEFAULT_RUNTIME_ID', () => {
   it('default runtime id is opencode', () => {
     expect(DEFAULT_RUNTIME_ID).toBe('opencode');
+  });
+});
+
+describe('builtInRuntimes', () => {
+  it('contains all 7 required runtimes', () => {
+    expect(builtInRuntimes).toHaveLength(7);
+    const ids = builtInRuntimes.map(m => m.id);
+    expect(ids).toContain('claude');
+    expect(ids).toContain('copilot');
+    expect(ids).toContain('codex');
+    expect(ids).toContain('gemini');
+    expect(ids).toContain('hermes');
+    expect(ids).toContain('pi');
+    expect(ids).toContain('opencode');
+  });
+
+  it('each runtime has required manifest fields', () => {
+    for (const manifest of builtInRuntimes) {
+      expect(manifest.id).toBeDefined();
+      expect(manifest.name).toBeDefined();
+      expect(manifest.executable).toBeDefined();
+      expect(['argv', 'stdin']).toContain(manifest.promptTransport);
+      expect(['text', 'json', 'ndjson']).toContain(manifest.outputFormat);
+      expect(typeof manifest.supportsModelOverride).toBe('boolean');
+      expect(typeof manifest.supportsExecutableOverride).toBe('boolean');
+      expect(typeof manifest.supportsExtraArgs).toBe('boolean');
+    }
+  });
+
+  it('each runtime has a non-empty executable name', () => {
+    for (const manifest of builtInRuntimes) {
+      expect(manifest.executable.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('opencode uses json output format', () => {
+    const opencodeManifest = builtInRuntimes.find(m => m.id === 'opencode');
+    expect(opencodeManifest?.outputFormat).toBe('json');
+  });
+
+  it('gemini uses ndjson output format', () => {
+    const geminiManifest = builtInRuntimes.find(m => m.id === 'gemini');
+    expect(geminiManifest?.outputFormat).toBe('ndjson');
+  });
+});
+
+describe('createBuiltInRegistry', () => {
+  it('creates a registry with all 7 built-in runtimes', () => {
+    const registry = createBuiltInRegistry();
+    expect(registry.list()).toHaveLength(7);
+  });
+
+  it('can look up each built-in runtime by id', () => {
+    const registry = createBuiltInRegistry();
+    for (const manifest of builtInRuntimes) {
+      const found = registry.get(manifest.id);
+      expect(found).toBeDefined();
+      expect(found?.id).toBe(manifest.id);
+      expect(found?.name).toBe(manifest.name);
+      expect(found?.executable).toBe(manifest.executable);
+    }
+  });
+
+  it('returns undefined for non-existent runtime', () => {
+    const registry = createBuiltInRegistry();
+    expect(registry.get('nonexistent')).toBeUndefined();
+  });
+
+  it('isRegistered returns true for all built-in runtimes', () => {
+    const registry = createBuiltInRegistry();
+    for (const manifest of builtInRuntimes) {
+      expect(registry.isRegistered(manifest.id)).toBe(true);
+    }
+  });
+
+  it('isRegistered returns false for non-existent runtime', () => {
+    const registry = createBuiltInRegistry();
+    expect(registry.isRegistered('nonexistent')).toBe(false);
+  });
+});
+
+describe('globalRuntimeRegistry', () => {
+  it('is a pre-populated registry with all built-in runtimes', () => {
+    expect(globalRuntimeRegistry.list()).toHaveLength(7);
+  });
+
+  it('contains all expected runtime ids', () => {
+    const ids = globalRuntimeRegistry.list();
+    expect(ids).toContain('claude');
+    expect(ids).toContain('copilot');
+    expect(ids).toContain('codex');
+    expect(ids).toContain('gemini');
+    expect(ids).toContain('hermes');
+    expect(ids).toContain('pi');
+    expect(ids).toContain('opencode');
+  });
+
+  it('can retrieve each built-in manifest', () => {
+    expect(globalRuntimeRegistry.get('claude')?.name).toBe('Claude');
+    expect(globalRuntimeRegistry.get('copilot')?.name).toBe('Copilot');
+    expect(globalRuntimeRegistry.get('codex')?.name).toBe('Codex');
+    expect(globalRuntimeRegistry.get('gemini')?.name).toBe('Gemini');
+    expect(globalRuntimeRegistry.get('hermes')?.name).toBe('Hermes');
+    expect(globalRuntimeRegistry.get('pi')?.name).toBe('Pi');
+    expect(globalRuntimeRegistry.get('opencode')?.name).toBe('OpenCode');
+  });
+
+  it('getDefault returns opencode manifest', () => {
+    const defaultManifest = globalRuntimeRegistry.getDefault();
+    expect(defaultManifest?.id).toBe('opencode');
   });
 });
