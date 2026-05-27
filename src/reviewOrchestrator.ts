@@ -37,8 +37,9 @@ export class ReviewOrchestrator implements vscode.Disposable {
       languageId,
       filePath: uri.fsPath,
       reviewType: 'selection',
+      startLine,
     };
-    await this.reviewCode(request, startLine);
+    await this.reviewCode(request);
   }
 
   async reviewStaged(): Promise<void> {
@@ -61,8 +62,9 @@ export class ReviewOrchestrator implements vscode.Disposable {
     this.commentController.clearAllComments();
   }
 
-  private async reviewCode(request: ReviewRequest, startLine: number = 0): Promise<void> {
+  private async reviewCode(request: ReviewRequest): Promise<void> {
     const typeLabel = 'code';
+    const startLine = request.startLine ?? 0;
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,

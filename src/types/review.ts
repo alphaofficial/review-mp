@@ -16,6 +16,7 @@ export interface ReviewRequest {
   filePath: string;
   reviewType: ReviewType;
   diff?: string;
+  startLine?: number;
 }
 
 export interface ReviewResult {

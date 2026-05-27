@@ -3,6 +3,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { ModelProvider, ProviderConfig } from './modelProvider';
 import { ReviewRequest, ReviewResult, ReviewComment } from '../types/review';
 import { getOpenCodeMissingErrorMessage, resolveOpenCodePath } from '../opencodePath';
+import { buildFileReviewPrompt, buildSelectionReviewPrompt, buildDiffReviewPrompt, formatDiffWithLineNumbers } from '../harness/prompts';
 
 export class OpenCodeProvider implements ModelProvider {
   readonly name = 'opencode';
@@ -54,18 +55,20 @@ export class OpenCodeProvider implements ModelProvider {
     request: ReviewRequest,
     cancellationToken?: vscode.CancellationToken
   ): Promise<ReviewResult> {
-    const prompt = this.buildReviewPrompt(request.code, request.languageId, request.filePath);
+    const promptResult = request.reviewType === 'selection'
+      ? buildSelectionReviewPrompt(request, request.startLine ?? 0)
+      : buildFileReviewPrompt(request);
 
     return new Promise((resolve, reject) => {
       const opencodePath = this.getOpenCodePath();
       const model = this.getModel();
       const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
-      const args = ['run', '--agent', 'reviewmp', '--format', 'json'];
+      const args = ['run', '--format', 'json'];
       if (model) {
         args.push('--model', model);
       }
-      args.push(prompt);
+      args.push(promptResult.prompt);
 
       console.log('[ReviewMP] OpenCode path:', opencodePath);
       console.log('[ReviewMP] Prompt length:', prompt.length);
@@ -128,23 +131,6 @@ export class OpenCodeProvider implements ModelProvider {
         reject(this.getOpenCodeStartupError(error, opencodePath));
       });
     });
-  }
-
-  private buildReviewPrompt(code: string, languageId: string, filePath: string): string {
-    const lines = code.split('\n');
-    const numberedCode = lines
-      .map((line, index) => `${index + 1}: ${line}`)
-      .join('\n');
-
-    return `Review the following ${languageId} code from file "${filePath}".
-
-<code>
-${numberedCode}
-</code>
-
-The code is prefixed with line numbers (1-based). When reporting issues, use the line numbers shown in the code.
-
-Provide your review as a JSON array of comments. Understand the entire code before reviewing. Each comment should identify issues, suggest improvements, or highlight potential bugs.`;
   }
 
   private parseReviewOutput(output: string, filePath: string): ReviewComment[] {
@@ -232,30 +218,19 @@ Provide your review as a JSON array of comments. Understand the entire code befo
       return { comments: [], provider: this.name };
     }
 
-    const formattedDiff = this.formatDiffWithLineNumbers(request.diff);
-
-    const prompt = `Review the following git changes. The diff is formatted with line numbers for accurate reference:
-
-<diff>
-${formattedDiff}
-</diff>
-
-When reporting issues:
-1. Use the line numbers shown in the diff (the numbers before each line of code)
-2. Include the file path for each issue (from the diff header like "diff --git a/path/to/file.ts b/path/to/file.ts")
-3. Provide your review as a JSON array with required fields: file, line, message, severity
-4. Ensure you understand the changes before reviewing`;
+    const formattedDiff = formatDiffWithLineNumbers(request.diff);
+    const promptResult = buildDiffReviewPrompt(request, formattedDiff);
 
     return new Promise((resolve, reject) => {
       const opencodePath = this.getOpenCodePath();
       const model = this.getModel();
       const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
-      const args = ['run', '--agent', 'reviewmp', '--format', 'json'];
+      const args = ['run', '--format', 'json'];
       if (model) {
         args.push('--model', model);
       }
-      args.push(prompt);
+      args.push(promptResult.prompt);
 
       this.currentProcess = spawn(opencodePath, args, {
         cwd,
@@ -374,53 +349,6 @@ When reporting issues:
         fix: typeof item.fix === 'string' ? item.fix : undefined,
         severity: this.validateSeverity(item.severity),
       }));
-  }
-
-  private formatDiffWithLineNumbers(diffOutput: string): string {
-    const lines = diffOutput.split('\n');
-    const formattedLines: string[] = [];
-    let currentLineNum = 0;
-    let inHunk = false;
-
-    for (const line of lines) {
-      if (line.startsWith('diff --git')) {
-        formattedLines.push(line);
-        continue;
-      }
-
-      if (line.startsWith('---') || line.startsWith('+++')) {
-        formattedLines.push(line);
-        continue;
-      }
-
-      if (line.startsWith('@@')) {
-        formattedLines.push(line);
-        inHunk = true;
-        const match = line.match(/\+(\d+)/);
-        if (match) {
-          currentLineNum = parseInt(match[1], 10) - 1;
-        }
-        continue;
-      }
-
-      if (!inHunk) {
-        formattedLines.push(line);
-        continue;
-      }
-
-      if (line.startsWith('+') && !line.startsWith('+++')) {
-        currentLineNum++;
-        formattedLines.push(`${currentLineNum}: ${line.substring(1)}`);
-      } else if (line.startsWith('-') && !line.startsWith('---')) {
-        // Removed line - skip it (being deleted)
-      } else if (line.startsWith(' ')) {
-        currentLineNum++;
-      } else {
-        formattedLines.push(line);
-      }
-    }
-
-    return formattedLines.join('\n');
   }
 
   async applyFix(filePath: string, line: number, fix: string): Promise<void> {
