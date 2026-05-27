@@ -1,19 +1,29 @@
 import * as vscode from 'vscode';
-import { OpenCodeService } from './opencode';
+import { ModelProvider } from './providers/modelProvider';
 import { ReviewCommentController, ReviewComment } from './comments';
+import { ReviewRequest } from './types/review';
+import { DiffContextCollector } from './harness/diffContextCollector';
 
 export class ReviewOrchestrator implements vscode.Disposable {
-  private opencodeService: OpenCodeService;
+  private provider: ModelProvider;
   private commentController: ReviewCommentController;
+  private diffCollector: DiffContextCollector;
 
-  constructor(opencodeService: OpenCodeService, commentController: ReviewCommentController) {
-    this.opencodeService = opencodeService;
+  constructor(provider: ModelProvider, commentController: ReviewCommentController) {
+    this.provider = provider;
     this.commentController = commentController;
+    this.diffCollector = new DiffContextCollector();
   }
 
   async reviewFile(document: vscode.TextDocument): Promise<void> {
     const content = document.getText();
-    await this.reviewCode(document.uri, content, 0, document.languageId);
+    const request: ReviewRequest = {
+      code: content,
+      languageId: document.languageId,
+      filePath: document.uri.fsPath,
+      reviewType: 'file',
+    };
+    await this.reviewCode(request);
   }
 
   async reviewSelection(
@@ -22,7 +32,13 @@ export class ReviewOrchestrator implements vscode.Disposable {
     startLine: number,
     languageId: string
   ): Promise<void> {
-    await this.reviewCode(uri, selectedText, startLine, languageId);
+    const request: ReviewRequest = {
+      code: selectedText,
+      languageId,
+      filePath: uri.fsPath,
+      reviewType: 'selection',
+    };
+    await this.reviewCode(request, startLine);
   }
 
   async reviewStaged(): Promise<void> {
@@ -45,12 +61,7 @@ export class ReviewOrchestrator implements vscode.Disposable {
     this.commentController.clearAllComments();
   }
 
-  private async reviewCode(
-    uri: vscode.Uri,
-    code: string,
-    startLine: number,
-    languageId: string
-  ): Promise<void> {
+  private async reviewCode(request: ReviewRequest, startLine: number = 0): Promise<void> {
     const typeLabel = 'code';
     await vscode.window.withProgress(
       {
@@ -60,25 +71,25 @@ export class ReviewOrchestrator implements vscode.Disposable {
       },
       async (progress, token) => {
         try {
-          const comments = await this.opencodeService.reviewCode(code, languageId, uri.fsPath, token);
+          const result = await this.provider.review(request, token);
 
           if (token.isCancellationRequested) {
             return;
           }
 
-          if (comments.length === 0) {
+          if (result.comments.length === 0) {
             vscode.window.showInformationMessage('No issues found in the code');
             return;
           }
 
-          const adjustedComments = comments.map((c) => ({
+          const adjustedComments = result.comments.map((c) => ({
             ...c,
             line: c.line + startLine,
           }));
 
-          this.commentController.addComments(uri, adjustedComments, languageId);
+          this.commentController.addComments(vscode.Uri.file(request.filePath), adjustedComments, request.languageId);
           vscode.window.showInformationMessage(
-            `ReviewMP: Found ${comments.length} comment(s)`
+            `ReviewMP: Found ${result.comments.length} comment(s)`
           );
         } catch (error) {
           if (error instanceof Error) {
@@ -105,21 +116,35 @@ export class ReviewOrchestrator implements vscode.Disposable {
       },
       async (progress, token) => {
         try {
-          const comments = await this.opencodeService.reviewDiff(type, token);
+          const diffResult = await this.diffCollector.getDiff(type, token);
 
           if (token.isCancellationRequested) {
             return;
           }
 
-          if (comments.length === 0) {
+          const request: ReviewRequest = {
+            code: '',
+            languageId: '',
+            filePath: '',
+            reviewType: type,
+            diff: diffResult.formattedDiff,
+          };
+
+          const result = await this.provider.review(request, token);
+
+          if (token.isCancellationRequested) {
+            return;
+          }
+
+          if (result.comments.length === 0) {
             vscode.window.showInformationMessage('No issues found in the changes');
             return;
           }
 
-          await this.addDiffComments(comments);
+          await this.addDiffComments(result.comments);
 
           vscode.window.showInformationMessage(
-            `ReviewMP: Found ${comments.length} comment(s) in ${labels[type]}`
+            `ReviewMP: Found ${result.comments.length} comment(s) in ${labels[type]}`
           );
         } catch (error) {
           if (error instanceof Error) {

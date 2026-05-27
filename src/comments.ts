@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { OpenCodeService } from './opencode';
+import { ModelProvider } from './providers/modelProvider';
 
 export interface ReviewComment {
   file: string;
@@ -20,10 +20,10 @@ export class ReviewCommentController implements vscode.Disposable {
   private controller: vscode.CommentController;
   private threads: Map<string, vscode.CommentThread[]> = new Map();
   private commentDataMap: WeakMap<vscode.Comment, CommentData> = new WeakMap();
-  private opencodeService: OpenCodeService;
+  private provider: ModelProvider;
 
-  constructor(context: vscode.ExtensionContext, opencodeService: OpenCodeService) {
-    this.opencodeService = opencodeService;
+  constructor(context: vscode.ExtensionContext, provider: ModelProvider) {
+    this.provider = provider;
     this.controller = vscode.comments.createCommentController(
       'reviewmp',
       'ReviewMP Comments'
@@ -129,11 +129,11 @@ export class ReviewCommentController implements vscode.Disposable {
           cancellable: false,
         },
         async () => {
-          await this.opencodeService.applyFix(
-            data.uri.fsPath,
-            data.line,
-            data.fix!
-          );
+          if (this.provider.applyFix) {
+            await this.provider.applyFix(data.uri.fsPath, data.line, data.fix!);
+          } else {
+            throw new Error('Fix application is not supported by the current provider');
+          }
         }
       );
 

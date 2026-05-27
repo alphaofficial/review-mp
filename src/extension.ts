@@ -1,23 +1,32 @@
 import * as vscode from 'vscode';
 import { ReviewCommentController } from './comments';
-import { OpenCodeService } from './opencode';
+import { OpenCodeProvider } from './providers/opencode';
 import { GitWatcher } from './gitWatcher';
 import { ReviewOrchestrator } from './reviewOrchestrator';
+import { ProviderConfig } from './providers/modelProvider';
 
 let commentController: ReviewCommentController;
-let opencodeService: OpenCodeService;
+let provider: OpenCodeProvider;
 let orchestrator: ReviewOrchestrator;
 let gitWatcher: GitWatcher | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('ReviewMP is now active');
 
-  opencodeService = new OpenCodeService();
-  commentController = new ReviewCommentController(context, opencodeService);
-  orchestrator = new ReviewOrchestrator(opencodeService, commentController);
-
-  // Only initialize git watcher if auto-review settings are enabled
   const config = vscode.workspace.getConfiguration('reviewmp');
+  const providerConfig: ProviderConfig = {
+    opencodePath: config.get<string>('opencodePath'),
+    model: config.get<string>('model'),
+  };
+
+  provider = new OpenCodeProvider(providerConfig);
+  commentController = new ReviewCommentController(context, provider);
+  orchestrator = new ReviewOrchestrator(provider, commentController);
+
+  if (gitWatcher) {
+    gitWatcher.dispose();
+  }
+
   const autoReviewOnStage = config.get<boolean>('autoReviewOnStage', false);
   const autoReviewOnCommit = config.get<boolean>('autoReviewOnCommit', false);
 
