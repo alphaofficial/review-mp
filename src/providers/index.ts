@@ -4,3 +4,4 @@ export { ProviderRegistry, globalRegistry } from './registry';
 export { OpenCodeProvider } from './opencode';
 export { OpenAICompatibleProvider, OpenAICompatibleConfig } from './openaiCompatible';
 export { CustomCliProvider, CliOutputMode, CustomCliConfig } from './customCli';
+export { AnthropicProvider, AnthropicConfig } from './anthropic';
