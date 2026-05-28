@@ -520,7 +520,7 @@ describe('CliRuntimeAdapter process execution', () => {
         ...createOpencodeManifest(),
         executable: 'codex',
         promptTransport: 'stdin',
-        prePromptArgs: ['exec', '--skip-git-repo-check'],
+        prePromptArgs: ['exec', '--skip-git-repo-check', '--ignore-rules'],
         modelArgFlag: '--model',
       };
       const mockProc = createMockProcess();
@@ -545,6 +545,7 @@ describe('CliRuntimeAdapter process execution', () => {
       expect(spawnArgs).toEqual([
         'exec',
         '--skip-git-repo-check',
+        '--ignore-rules',
         '--model',
         'gpt-5',
         '--sandbox',
