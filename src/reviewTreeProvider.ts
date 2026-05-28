@@ -5,11 +5,13 @@ import { ReviewFinding, ReviewFile, ReviewHistoryEntry, ReviewSession, Severity 
 export interface TreeElement {
   id: string;
   label: string;
+  description?: string;
   icon?: string;
   command?: vscode.Command;
   contextValue?: string;
   collapsibleState?: vscode.TreeItemCollapsibleState;
   children?: TreeElement[];
+  tooltip?: string;
   finding?: ReviewFinding;
   file?: ReviewFile;
   historyEntry?: ReviewHistoryEntry;
@@ -21,6 +23,7 @@ export type ReviewTreeViewId = 'reviewmp.newReview' | 'reviewmp.filesToReview' |
 export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> {
   private viewId: ReviewTreeViewId;
   private store: ReviewSessionStore;
+  private timeAgoRefreshTimer: NodeJS.Timeout | undefined;
   private _onDidChangeTreeData: vscode.EventEmitter<TreeElement | undefined | void> = new vscode.EventEmitter<TreeElement | undefined | void>();
   readonly onDidChangeTreeData: vscode.Event<TreeElement | undefined | void> = this._onDidChangeTreeData.event;
 
@@ -28,6 +31,7 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
     this.viewId = viewId;
     this.store = store || getReviewSessionStore();
     this.subscribeToStoreEvents();
+    this.startTimeAgoRefresh();
   }
 
   private subscribeToStoreEvents(): void {
@@ -43,6 +47,18 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
     this._onDidChangeTreeData.fire();
   }
 
+  private startTimeAgoRefresh(): void {
+    if (this.viewId !== 'reviewmp.previousReviews') {
+      return;
+    }
+
+    this.timeAgoRefreshTimer = setInterval(() => {
+      if (this.store.getSessionHistory().length > 0) {
+        this.refresh();
+      }
+    }, 30_000);
+  }
+
   getTreeItem(element: TreeElement): vscode.TreeItem {
     const treeItem = new vscode.TreeItem(
       element.label,
@@ -51,6 +67,14 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
 
     if (element.icon) {
       treeItem.iconPath = new vscode.ThemeIcon(element.icon);
+    }
+
+    if (element.description) {
+      treeItem.description = element.description;
+    }
+
+    if (element.tooltip) {
+      treeItem.tooltip = element.tooltip;
     }
 
     if (element.command) {
@@ -91,47 +115,66 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
   }
 
   private getNewReviewItems(): TreeElement[] {
+    const session = this.store.getActiveSession();
+
+    if (session && session.status !== 'completed' && session.status !== 'failed') {
+      return [
+        {
+          id: 'active-review-scope',
+          label: this.getReviewScopeLabel(session),
+          description: this.getStatusLabel(session.status),
+          icon: 'git-compare',
+        },
+        {
+          id: 'clear-active-review',
+          label: 'Stop Review',
+          icon: 'debug-stop',
+          command: { command: 'reviewmp.clearActiveReview', title: 'Stop Review' },
+        },
+      ];
+    }
+
     return [
       {
         id: 'review-all-changes',
         label: 'Review All Changes',
-        icon: '$(git-incoming)',
+        icon: 'git-compare',
         command: { command: 'reviewmp.reviewAllChanges', title: 'Review All Changes' },
       },
       {
         id: 'review-staged',
         label: 'Review Staged Changes',
-        icon: '$(git-staged)',
+        icon: 'diff-added',
         command: { command: 'reviewmp.reviewStaged', title: 'Review Staged Changes' },
       },
       {
         id: 'review-uncommitted',
         label: 'Review Uncommitted Changes',
-        icon: '$(git-unstaged)',
+        icon: 'diff-modified',
         command: { command: 'reviewmp.reviewUncommitted', title: 'Review Uncommitted Changes' },
       },
       {
         id: 'review-current-file',
         label: 'Review Current File',
-        icon: '$(file)',
+        icon: 'file',
         command: { command: 'reviewmp.reviewFile', title: 'Review Current File' },
       },
       {
         id: 'review-selection',
         label: 'Review Current Selection',
-        icon: '$(selection)',
+        icon: 'selection',
         command: { command: 'reviewmp.reviewSelection', title: 'Review Current Selection' },
       },
       {
         id: 'review-last-commit',
         label: 'Review Last Commit',
-        icon: '$(git-commit)',
+        icon: 'git-commit',
         command: { command: 'reviewmp.reviewLastCommit', title: 'Review Last Commit' },
       },
       {
         id: 'review-branch',
         label: 'Review Branch Changes',
-        icon: '$(git-branch)',
+        icon: 'git-branch',
         command: { command: 'reviewmp.reviewBranch', title: 'Review Branch Changes' },
       },
     ];
@@ -143,7 +186,7 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
       return [{
         id: 'no-session',
         label: 'No active review',
-        icon: '$(info)',
+        icon: 'info',
       }];
     }
 
@@ -152,7 +195,7 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
       return [{
         id: 'no-files',
         label: 'No files to review',
-        icon: '$(circle-outline)',
+        icon: 'circle-outline',
       }];
     }
 
@@ -164,22 +207,27 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
     const findingCount = file.findings.length;
     const pendingCount = file.findings.filter(f => f.status === 'pending').length;
 
-    let label = this.getRelativePath(file.path);
-    if (pendingCount > 0) {
-      label += ` (${pendingCount} pending)`;
-    }
-
-    return {
+    const label = this.getFileName(file.path);
+    const element: TreeElement = {
       id: `file-${file.path}`,
       label,
+      description: pendingCount > 0 ? `${pendingCount}!` : findingCount > 0 ? `${findingCount}` : '',
       icon: statusIcon,
+      tooltip: file.path,
       file,
-      command: {
+      collapsibleState: findingCount > 0 ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None,
+      children: file.findings.map(finding => this.findingToTreeElement(finding)),
+    };
+
+    if (findingCount === 0) {
+      element.command = {
         command: 'vscode.open',
         title: 'Open File',
         arguments: [vscode.Uri.file(file.path)],
-      },
-    };
+      };
+    }
+
+    return element;
   }
 
   private getReviewsItems(): TreeElement[] {
@@ -188,7 +236,7 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
       return [{
         id: 'no-review',
         label: 'No active review',
-        icon: '$(info)',
+        icon: 'info',
       }];
     }
 
@@ -196,41 +244,64 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
 
     items.push({
       id: 'session-header',
-      label: `${session.title} (${this.getStatusLabel(session.status)})`,
+      label: session.title,
+      description: `${this.getStatusLabel(session.status)} · ${session.totalFindings} ${session.totalFindings === 1 ? 'finding' : 'findings'}`,
       icon: this.getStatusIcon(session.status),
       collapsibleState: vscode.TreeItemCollapsibleState.Expanded,
       session,
-      children: this.getSessionFileGroups(session),
+      children: [
+        ...this.getReviewProgressItems(session),
+        ...this.getReviewFilesSection(session),
+      ],
     });
 
     return items;
   }
 
-  private getSessionFileGroups(session: ReviewSession): TreeElement[] {
+  private getReviewProgressItems(session: ReviewSession): TreeElement[] {
+    const currentStep = this.getProgressStepIndex(session.status);
+    const steps = [
+      { id: 'setting-up', label: 'Setting up' },
+      { id: 'analyzing', label: 'Analyzing changes' },
+      { id: 'reviewing', label: 'Reviewing files' },
+    ];
+
+    return steps.map((step, index) => ({
+      id: `progress-${step.id}`,
+      label: step.label,
+      icon: index < currentStep ? 'check' : index === currentStep ? 'sync~spin' : 'circle-outline',
+      description: index === currentStep && session.status !== 'completed' && session.status !== 'failed' ? '...' : '',
+    }));
+  }
+
+  private getReviewFilesSection(session: ReviewSession): TreeElement[] {
     const files = Array.from(session.files.values());
 
-    return files.map(file => ({
-      id: `file-group-${file.path}`,
-      label: `${this.getRelativePath(file.path)} (${file.findings.length} findings)`,
-      icon: this.getFileStatusIcon(file.status),
+    if (files.length === 0) {
+      return [];
+    }
+
+    return [{
+      id: 'review-files',
+      label: `Files (${files.length})`,
+      icon: 'files',
       collapsibleState: vscode.TreeItemCollapsibleState.Expanded,
-      file,
-      children: file.findings.map(finding => this.findingToTreeElement(finding)),
-    }));
+      children: files.map(file => this.fileToTreeElement(file)),
+    }];
   }
 
   private findingToTreeElement(finding: ReviewFinding): TreeElement {
     const severityIcon = this.getSeverityIcon(finding.severity);
-    const statusIcon = finding.status === 'applied' ? '$(check)' :
-                       finding.status === 'dismissed' ? '$(x)' : '';
-    const fixIcon = finding.fix ? ' $(tool)' : '';
-
-    const label = `${severityIcon} Line ${finding.line}: ${finding.message}${fixIcon}${statusIcon ? ` ${statusIcon}` : ''}`;
+    const statusLabel = finding.status === 'applied' ? 'fixed' :
+                        finding.status === 'dismissed' ? 'dismissed' : this.getSeverityLabel(finding.severity);
+    const fixLabel = finding.fix ? ' · fix' : '';
 
     return {
       id: `finding-${finding.id}`,
-      label,
+      label: finding.message,
+      description: `${statusLabel}${fixLabel}`,
       icon: severityIcon,
+      tooltip: `Line ${finding.line}: ${finding.message}`,
       finding,
       contextValue: finding.fix ? 'findingWithFix' : 'finding',
       command: {
@@ -247,7 +318,7 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
       return [{
         id: 'no-history',
         label: 'No previous reviews',
-        icon: '$(history)',
+        icon: 'history',
       }];
     }
 
@@ -255,15 +326,14 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
   }
 
   private historyEntryToTreeElement(entry: ReviewHistoryEntry): TreeElement {
-    const date = new Date(entry.completedAt).toLocaleDateString();
+    const timeAgo = this.formatTimeAgo(entry.completedAt);
     const duration = this.formatDuration(entry.duration);
     const typeIcon = this.getReviewTypeIcon(entry.reviewType);
 
-    const label = `${entry.title} (${entry.findingsCount} findings) - ${date} - ${duration}`;
-
     return {
       id: `history-${entry.sessionId}`,
-      label,
+      label: entry.title,
+      description: `${entry.findingsCount} findings · ${timeAgo} · ${duration}`,
       icon: typeIcon,
       collapsibleState: vscode.TreeItemCollapsibleState.None,
       historyEntry: entry,
@@ -276,24 +346,53 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
     };
   }
 
-  private getRelativePath(filePath: string): string {
+  private getFileName(filePath: string): string {
     const parts = filePath.split('/').filter(p => p.length > 0);
-    if (parts.length > 3) {
-      return '...' + parts.slice(-2).join('/');
-    }
-    return filePath;
+    return parts.at(-1) || filePath;
   }
 
   private getStatusLabel(status: string): string {
     const labels: Record<string, string> = {
       idle: 'Idle',
-      settingUp: 'Setting up...',
-      analyzing: 'Analyzing...',
+      settingUp: 'Setting up',
+      analyzing: 'Analyzing',
       reviewing: 'Reviewing',
       completed: 'Completed',
       failed: 'Failed',
     };
     return labels[status] || status;
+  }
+
+  private getProgressStepIndex(status: string): number {
+    const indexByStatus: Record<string, number> = {
+      idle: 0,
+      settingUp: 0,
+      analyzing: 1,
+      reviewing: 2,
+      completed: 3,
+      failed: 3,
+    };
+    return indexByStatus[status] ?? 0;
+  }
+
+  private getReviewScopeLabel(session: ReviewSession): string {
+    switch (session.reviewType) {
+      case 'staged':
+        return 'Review staged changes';
+      case 'uncommitted':
+        return 'Review uncommitted changes';
+      case 'lastCommit':
+        return 'Review committed changes';
+      case 'branch':
+      case 'pullRequest':
+        return 'Review all changes';
+      case 'file':
+        return 'Review current file';
+      case 'selection':
+        return 'Review current selection';
+      default:
+        return 'Review all changes';
+    }
   }
 
   private getStatusIcon(status: string): string {
@@ -305,7 +404,7 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
       completed: '$(check-circle)',
       failed: '$(error)',
     };
-    return icons[status] || '$(circle)';
+    return this.toThemeIconId(icons[status] || '$(circle)');
   }
 
   private getFileStatusIcon(status: string): string {
@@ -315,7 +414,7 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
       reviewed: '$(check)',
       failed: '$(error)',
     };
-    return icons[status] || '$(file)';
+    return this.toThemeIconId(icons[status] || '$(file)');
   }
 
   private getSeverityIcon(severity: Severity): string {
@@ -325,20 +424,34 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
       info: '$(info)',
       suggestion: '$(lightbulb)',
     };
-    return icons[severity] || '$(info)';
+    return this.toThemeIconId(icons[severity] || '$(info)');
+  }
+
+  private getSeverityLabel(severity: Severity): string {
+    const labels: Record<Severity, string> = {
+      error: 'Potential Issue',
+      warning: 'Warning',
+      info: 'Info',
+      suggestion: 'Suggestion',
+    };
+    return labels[severity];
   }
 
   private getReviewTypeIcon(reviewType: string): string {
     const icons: Record<string, string> = {
       file: '$(file)',
       selection: '$(selection)',
-      staged: '$(git-staged)',
-      uncommitted: '$(git-unstaged)',
+      staged: '$(diff-added)',
+      uncommitted: '$(diff-modified)',
       lastCommit: '$(git-commit)',
       branch: '$(git-branch)',
       pullRequest: '$(git-pull-request)',
     };
-    return icons[reviewType] || '$(file)';
+    return this.toThemeIconId(icons[reviewType] || '$(file)');
+  }
+
+  private toThemeIconId(icon: string): string {
+    return icon.replace(/^\$\((.*)\)$/, '$1');
   }
 
   private formatDuration(ms: number): string {
@@ -354,7 +467,39 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
     return `${minutes}m ${remainingSeconds}s`;
   }
 
+  private formatTimeAgo(timestamp: number): string {
+    const secondsAgo = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+    if (secondsAgo < 60) {
+      return `${secondsAgo}s ago`;
+    }
+
+    const minutesAgo = Math.floor(secondsAgo / 60);
+    if (minutesAgo < 60) {
+      return `${minutesAgo}m ago`;
+    }
+
+    const hoursAgo = Math.floor(minutesAgo / 60);
+    if (hoursAgo < 24) {
+      return `${hoursAgo}h ago`;
+    }
+
+    const daysAgo = Math.floor(hoursAgo / 24);
+    if (daysAgo < 30) {
+      return `${daysAgo}d ago`;
+    }
+
+    return new Date(timestamp).toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  }
+
   dispose(): void {
+    if (this.timeAgoRefreshTimer) {
+      clearInterval(this.timeAgoRefreshTimer);
+      this.timeAgoRefreshTimer = undefined;
+    }
     this._onDidChangeTreeData.dispose();
   }
 }

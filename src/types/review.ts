@@ -6,6 +6,7 @@ export interface ReviewFinding {
   id: string;
   file: string;
   line: number;
+  title?: string;
   message: string;
   severity: Severity;
   fix?: string;
@@ -42,6 +43,8 @@ export interface ReviewHistoryEntry {
   completedAt: number;
   findingsCount: number;
   duration: number;
+  files: ReviewFile[];
+  findings: ReviewFinding[];
 }
 
 export type FindingAction = 'apply' | 'dismiss';
@@ -49,6 +52,7 @@ export type FindingAction = 'apply' | 'dismiss';
 export interface ReviewComment {
   file: string;
   line: number;
+  title?: string;
   message: string;
   fix?: string;
   severity?: Severity;

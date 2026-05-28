@@ -1,519 +1,301 @@
-# ReviewMP Sidebar + Inline Review UX PRD
+# ReviewMP Provider-Agnostic Review Harness Spec
 
 ## 1. Summary
 
-ReviewMP should evolve from "inline comments after a command" into a full VS Code review experience with two synchronized surfaces:
+ReviewMP should be a code review harness, not a provider product.
 
-- a dedicated Activity Bar sidebar for review state, changed files, grouped findings, and previous reviews
-- inline editor comments and highlights for findings anchored to exact code locations
+Its job is to:
 
-The target interaction model is similar to CodeRabbit's VS Code extension: developers start and monitor reviews from a sidebar, scan findings grouped by file, click a finding to jump to the relevant code, and act on the same finding from either the sidebar or inline comment.
+- collect review context
+- run a bounded review loop
+- enforce safe read-only tools
+- parse and validate review findings
+- place inline comments in VS Code
 
-ReviewMP does not need chat. ReviewMP should stay a review tool, not a coding-agent chat product.
+Its job is not to own model hosting, auth flows, or provider-specific review behavior.
 
-## 2. Problem
+ReviewMP should support the same runtime surface used by `alphaofficial/ralph-loop`:
 
-ReviewMP currently places comments inline, but it lacks a central review surface.
+- `claude`
+- `copilot`
+- `codex`
+- `gemini`
+- `hermes`
+- `pi`
+- `opencode`
 
-This creates several UX problems:
+These are the supported review backends. The harness must stay agnostic to which one is selected.
 
-- Users cannot easily see all findings across files.
-- Users cannot scan review progress by file or stage.
-- Users cannot navigate from a review summary to the exact inline comment.
-- Dismissing or applying a fix is local to the inline thread and not reflected in a larger review session UI.
-- Review state disappears into notifications and scattered editor comments.
+## 2. Core Product Decision
 
-The existing inline comments are useful, but they need a sidebar navigator and shared state model.
+ReviewMP will standardize on a single harness-owned review workflow and treat external AI runtimes as interchangeable execution adapters.
+
+That means:
+
+- prompts, tool rules, parsing, retries, diff handling, and comment validation live in ReviewMP
+- auth, account selection, installed binaries, and provider-specific model routing stay with the external runtime
+- ReviewMP must not branch into different review behavior because the selected backend is `claude` vs `codex` vs `hermes`
+
+The only backend-specific code allowed is adapter code required to invoke the runtime and normalize its output.
 
 ## 3. Goals
 
 ### 3.1 Product Goals
 
-- Provide a CodeRabbit-style review sidebar inside VS Code.
-- Preserve and improve inline comments anchored to code lines.
-- Make sidebar items and inline comments represent the same underlying finding.
-- Allow users to start reviews, monitor review progress, browse findings, and jump to comments from one place.
-- Keep review actions simple: open, apply fix, dismiss, clear review.
+- make ReviewMP usable with the runtime backends developers already use
+- remove product dependence on OpenCode-specific review behavior
+- keep review quality and safety consistent across all supported runtimes
+- make provider choice a configuration detail, not an architectural fork
 
 ### 3.2 Engineering Goals
 
-- Introduce a shared review session state model.
-- Render sidebar, inline comments, and editor decorations from the same state.
-- Keep review execution runtime-agnostic.
-- Avoid adding chat or agent conversation UI.
-- Use native VS Code UI primitives first: Activity Bar, Tree View, CommentController, commands, and editor decorations.
+- replace hardcoded provider classes and `switch`-based selection with a registry-driven adapter system
+- keep the review harness provider-neutral
+- make adding a new runtime mostly a manifest/adapter task, not a harness rewrite
+- minimize provider-specific settings in `package.json`
 
 ## 4. Non-Goals
 
-- Building a chat panel.
-- Building an autonomous code editing agent.
-- Replacing VS Code inline comments with a fully custom webview.
-- Cloning CodeRabbit branding, icons, copy, or visual identity.
-- Implementing account login or SaaS/self-hosted onboarding in this phase.
-- Managing cloud review history across machines.
-
-## 5. Target UX
-
-ReviewMP should have a dedicated Activity Bar icon. Opening it shows a ReviewMP sidebar.
-
-The sidebar should include these sections:
-
-- `NEW REVIEW`
-- `FILES TO REVIEW`
-- `REVIEWS`
-- `PREVIOUS REVIEWS`
-
-The editor should continue to show inline comments for review findings. Clicking a sidebar finding should open the file, reveal the line, highlight the relevant range, and expose the inline comment context.
-
-## 6. Sidebar Structure
-
-### 6.1 NEW REVIEW
-
-Purpose: start a review and show current review scope.
-
-Content:
-
-- current branch label
-- optional compare/base branch label when reviewing branch or PR-style diffs
-- primary command item: `Review all changes`
-- dropdown or secondary commands for:
-  - `Review staged changes`
-  - `Review uncommitted changes`
-  - `Review current file`
-  - `Review selection`
-  - `Review last commit`
-  - `Review branch changes`
-
-Implementation:
-
-- Use command-backed tree items.
-- The primary action should call existing ReviewMP commands.
-- The tree must not block existing Command Palette flows.
-
-### 6.2 FILES TO REVIEW
-
-Purpose: show changed/reviewable files before or during a review.
-
-Content:
-
-- file rows with VS Code file icons
-- file path or compact relative path
-- optional status marker:
-  - staged
-  - modified
-  - added
-  - deleted
-- optional checkbox state in a later phase
-
-Behavior:
-
-- Clicking a file opens it.
-- During review, files can show a lightweight status:
-  - pending
-  - reviewing
-  - reviewed
-
-Initial implementation can populate this section from the same diff context already used by `ReviewOrchestrator`.
-
-### 6.3 REVIEWS
-
-Purpose: show current review progress and findings.
-
-Top-level content:
-
-- current review title
-- current review status
-- progress steps:
-  - `Setting up`
-  - `Analyzing changes`
-  - `Reviewing files`
-  - `Review completed`
-  - `Review failed`
-- total finding count
-
-Findings content:
-
-- findings grouped by file
-- collapsible file groups
-- file-level count badges
-- finding rows with:
-  - severity
-  - short message
-  - line number
-  - fix availability marker
-
-Severity labels:
-
-- `Potential Issue`
-- `Warning`
-- `Suggestion`
-- `Info`
-- `Refactor Suggestion`
-
-Mapping:
-
-- `error` -> `Potential Issue`
-- `warning` -> `Warning`
-- `suggestion` -> `Refactor Suggestion`
-- `info` -> `Info`
-
-Behavior:
-
-- Clicking a finding opens the file at the finding line.
-- The matching inline comment should be revealed if possible.
-- The editor should briefly highlight the finding range or line.
-- Context menu actions:
-  - `Open Finding`
-  - `Apply Fix`
-  - `Dismiss`
-  - `Copy Message`
-
-### 6.4 PREVIOUS REVIEWS
-
-Purpose: make recent local review sessions accessible.
-
-Initial scope:
-
-- in-memory history for the current VS Code session
-- each previous review shows:
-  - review type
-  - timestamp
-  - finding count
-  - status
-
-Later scope:
-
-- persist limited history in `ExtensionContext.workspaceState`
-- allow reopening previous review findings
-- allow clearing history
-
-## 7. Inline Comments
-
-Inline comments remain a first-class part of the UX.
-
-ReviewMP should continue using `vscode.CommentController` for line-anchored comments.
-
-Inline comment body should be improved:
-
-- concise finding message
-- severity label
-- optional fix preview
-- optional file/line metadata only when useful
-
-Inline comment actions:
-
-- `Apply Fix`
-- `Dismiss`
-- `Open in Review Panel`
-
-Rules:
-
-- Inline comments and sidebar findings must share the same finding ID.
-- Dismissing a comment inline removes or marks the matching sidebar item.
-- Dismissing a sidebar finding disposes the matching inline thread.
-- Applying a fix from either surface updates both surfaces.
-
-## 8. Editor Decorations
-
-ReviewMP should add lightweight editor decorations for selected findings.
-
-Decoration behavior:
-
-- When a sidebar finding is selected, highlight its line or range in the editor.
-- Clear the previous selection highlight when another finding is selected.
-- Use severity-specific border or gutter styling.
-
-Decoration requirements:
-
-- Must respect the active VS Code theme.
-- Must not obscure text.
-- Must not duplicate the inline comment UI.
-
-Initial decoration types:
-
-- selected finding highlight
-- error gutter marker
-- warning/suggestion gutter marker
-
-## 9. Shared State Model
-
-Introduce a `ReviewSessionStore`.
-
-The store owns review state and emits changes to UI surfaces.
-
-### 9.1 Core Types
-
-```ts
-export type ReviewStatus =
-  | 'idle'
-  | 'settingUp'
-  | 'analyzing'
-  | 'reviewing'
-  | 'completed'
-  | 'failed';
-
-export interface ReviewSession {
-  id: string;
-  title: string;
-  type: ReviewType;
-  status: ReviewStatus;
-  startedAt: number;
-  completedAt?: number;
-  runtimeId?: string;
-  files: ReviewFile[];
-  findings: ReviewFinding[];
-  error?: string;
-}
-
-export interface ReviewFile {
-  uri: vscode.Uri;
-  relativePath: string;
-  status: 'pending' | 'reviewing' | 'reviewed' | 'failed';
-  findingCount: number;
-}
-
-export interface ReviewFinding {
-  id: string;
-  file: string;
-  uri: vscode.Uri;
-  line: number;
-  range?: vscode.Range;
-  severity: 'error' | 'warning' | 'info' | 'suggestion';
-  message: string;
-  fix?: string;
-  state: 'open' | 'dismissed' | 'fixed';
-}
-```
-
-### 9.2 Store Responsibilities
-
-- create review sessions
-- update review status
-- set files to review
-- add findings
-- update finding state
-- clear active review
-- keep recent review history
-- expose change events for sidebar, comments, and decorations
-
-## 10. Architecture
-
-Target architecture:
+- implementing direct vendor SDK integrations in the first pass
+- managing API keys for every upstream provider inside ReviewMP
+- supporting arbitrary custom CLIs as a first-class architecture primitive
+- allowing model-requested shell execution or file mutation during review
+- making ReviewMP a general-purpose coding agent
+
+## 5. Supported Runtime Backends
+
+Initial built-in support targets the same backends documented by `ralph-loop`.
+
+| Runtime ID | Primary executable | Notes |
+|---|---|---|
+| `claude` | `claude` | Uses the user's existing Claude Code install and auth |
+| `copilot` | `copilot` | Uses the user's existing GitHub Copilot CLI install and auth |
+| `codex` | `codex` | Uses the user's existing Codex install and auth |
+| `gemini` | `gemini` | Uses the user's existing Gemini CLI install and auth |
+| `hermes` | `hermes` | Runtime may route to different providers internally |
+| `pi` | `pi` | Runtime may route to different providers internally |
+| `opencode` | `opencode` | Backward-compatibility path for current users |
+
+ReviewMP does not install these tools. It only discovers and invokes them.
+
+## 6. Architecture
+
+### 6.1 High-Level Flow
 
 ```text
 VS Code command
   -> ReviewOrchestrator
-  -> ReviewHarness / RuntimeAdapter
-  -> ReviewSessionStore
-     -> ReviewTreeProvider
-     -> ReviewCommentController
-     -> ReviewDecorationController
+  -> ReviewHarness
+     -> ContextCollector
+     -> ToolExecutor
+     -> RuntimeRegistry
+     -> RuntimeAdapter
+     -> OutputParser
+     -> CommentValidator
+  -> CommentController
 ```
 
-### 10.1 ReviewOrchestrator
+### 6.2 Harness-Owned Responsibilities
 
-Changes:
+The following logic must be identical regardless of selected runtime:
 
-- create/update review sessions when reviews start
-- set progress states in `ReviewSessionStore`
-- publish final findings to the store
-- stop directly treating comments as the only review output
+- file, selection, staged, uncommitted, last-commit, branch, and PR review flows
+- prompt construction
+- diff formatting and chunking
+- read-only tool execution
+- retry and bounded loop behavior
+- output normalization
+- comment validation and deduplication
+- VS Code comment placement and fix application
 
-### 10.2 ReviewCommentController
+### 6.3 Runtime-Owned Responsibilities
 
-Changes:
+The selected runtime owns:
 
-- render inline comments from `ReviewFinding[]`
-- track finding IDs instead of only weakly mapping comments to data
-- expose methods:
-  - `renderFindings(session: ReviewSession): void`
-  - `revealFinding(findingId: string): Promise<void>`
-  - `dismissFinding(findingId: string): void`
+- authentication
+- account/session state
+- model availability
+- provider routing inside the runtime
+- runtime-specific CLI semantics
 
-### 10.3 ReviewTreeProvider
+## 7. Runtime Adapter Model
 
-New native Tree View provider.
+The provider layer should be renamed conceptually from "provider" to "runtime adapter".
 
-Responsibilities:
+ReviewMP should use one generic CLI adapter path wherever possible, configured by runtime manifests.
 
-- render the sidebar sections
-- render review progress
-- render files and findings
-- invoke commands for review actions
-- refresh on store changes
+### 7.1 Manifest Shape
 
-### 10.4 ReviewDecorationController
-
-New controller for selected finding highlights.
-
-Responsibilities:
-
-- apply highlight decorations
-- clear stale decorations
-- reveal selected finding locations
-
-## 11. VS Code Contributions
-
-`package.json` should add:
-
-- Activity Bar view container
-- Tree views
-- commands
-- menu contributions for tree items
-
-Example contribution shape:
-
-```json
-{
-  "contributes": {
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "reviewmp",
-          "title": "ReviewMP",
-          "icon": "resources/reviewmp.svg"
-        }
-      ]
-    },
-    "views": {
-      "reviewmp": [
-        {
-          "id": "reviewmp.reviews",
-          "name": "Reviews"
-        }
-      ]
-    }
-  }
+```ts
+export interface RuntimeManifest {
+  id: RuntimeId;
+  displayName: string;
+  executable: string;
+  executableOverrideSetting?: string;
+  availabilityCheck: 'path';
+  invocationMode: 'oneshot';
+  promptTransport: 'argv' | 'stdin';
+  outputFormat: 'text' | 'json' | 'ndjson';
+  modelOverride?: {
+    type: 'flag' | 'env' | 'unsupported';
+    name?: string;
+  };
+  extraArgsSetting?: string;
+  capabilities: {
+    supportsModelOverride: boolean;
+    supportsStreaming: boolean;
+    supportsToolCalling: boolean;
+  };
 }
 ```
 
-Commands:
+### 7.2 Adapter Interface
 
-- `reviewmp.reviewAllChanges`
-- `reviewmp.openFinding`
-- `reviewmp.applyFindingFix`
-- `reviewmp.dismissFinding`
-- `reviewmp.clearActiveReview`
-- `reviewmp.openReviewPanel`
+```ts
+export interface RuntimeAdapter {
+  readonly manifest: RuntimeManifest;
+  isAvailable(): Promise<boolean>;
+  review(request: RuntimeReviewRequest, token?: CancellationToken): Promise<RuntimeReviewResult>;
+  cancel(): void;
+}
+```
 
-Existing commands should remain supported.
+### 7.3 Design Rule
 
-## 12. Interaction Flows
+ReviewMP must not create a custom harness code path per runtime unless a runtime cannot be represented by the shared adapter contract.
 
-### 12.1 Start Review from Sidebar
+Default expectation:
 
-1. User opens ReviewMP sidebar.
-2. User clicks `Review all changes`.
-3. Store creates an active review session.
-4. Sidebar shows progress states.
-5. ReviewMP runs existing review pipeline.
-6. Store receives findings.
-7. Sidebar renders findings grouped by file.
-8. Inline comments appear in the editor.
+- one registry
+- one generic CLI runtime adapter
+- per-runtime manifests
+- per-runtime output normalizers only where needed
 
-### 12.2 Navigate to Finding
+## 8. Configuration Model
 
-1. User clicks a finding in the sidebar.
-2. ReviewMP opens the file.
-3. ReviewMP scrolls to the finding line.
-4. ReviewMP highlights the finding range.
-5. Matching inline comment is visible at that line.
+### 8.1 Required Settings
 
-### 12.3 Apply Fix
+ReviewMP should move from provider-specific configuration to runtime-oriented configuration.
 
-1. User clicks `Apply Fix` in sidebar or inline comment.
-2. ReviewMP applies the fix using existing `FixApplicator`.
-3. Store marks finding as `fixed`.
-4. Inline comment is disposed or marked resolved.
-5. Sidebar updates the finding state and file count.
+```json
+{
+  "reviewmp.runtime": "codex",
+  "reviewmp.model": "gpt-5.4",
+  "reviewmp.debug": false
+}
+```
 
-### 12.4 Dismiss Finding
+### 8.2 Settings Direction
 
-1. User clicks `Dismiss`.
-2. Store marks finding as `dismissed`.
-3. Inline comment is disposed.
-4. Sidebar hides or visually marks the finding, depending on filter settings.
+Keep the settings surface small:
 
-## 13. Visual Design Direction
+- `reviewmp.runtime`
+- `reviewmp.model`
+- `reviewmp.debug`
+- `reviewmp.autoReviewOnStage`
+- `reviewmp.autoReviewOnCommit`
+- optional runtime executable overrides
+- optional runtime extra args
 
-Use native VS Code styling, not a custom branded design system.
+Avoid first-class settings like:
 
-Sidebar:
+- `reviewmp.openaiCompatibleEndpoint`
+- `reviewmp.customCliCommand`
+- per-provider API key fields
 
-- compact tree layout
-- file icons from VS Code theme
-- severity labels in concise text
-- count badges in descriptions or labels
-- collapsible groups
-- minimal custom icons
+Those pull ReviewMP back toward provider-specific architecture.
 
-Inline comments:
+### 8.3 Model Override Semantics
 
-- compact Markdown
-- no large code blocks unless a fix exists
-- fix preview should be short and readable
+`reviewmp.model` is best-effort pass-through.
 
-Decorations:
+- if the selected runtime supports model override, ReviewMP passes it through
+- if it does not, ReviewMP warns clearly and proceeds with the runtime default
 
-- theme-aware
-- subtle line/range highlight
-- severity gutter cue
+The harness must not encode provider-specific model catalogs.
 
-## 14. Phased Delivery
+## 9. Review Execution Contract
 
-### Phase 1: Shared State + Sidebar Skeleton
+Each runtime adapter must support a non-interactive review invocation that:
 
-- Add `ReviewSessionStore`.
-- Add Activity Bar container.
-- Add `ReviewTreeProvider`.
-- Render static sections.
-- Wire existing review commands into sidebar actions.
+1. receives a single harness-built review prompt
+2. returns structured findings directly or returns text that the harness can parse deterministically
+3. exits with a meaningful status code
+4. can be cancelled by ReviewMP
 
-### Phase 2: Findings Tree
+The harness prompt must define the response schema. ReviewMP should not rely on each runtime having native tool-calling or native structured-output features.
 
-- Publish review findings into the store.
-- Group findings by file.
-- Render counts and severity labels.
-- Add `openFinding` command.
+## 10. Output Normalization
 
-### Phase 3: Inline Synchronization
+Because the supported runtimes do not share one transport protocol, ReviewMP should normalize output into one internal result shape:
 
-- Add stable finding IDs.
-- Render inline comments from store findings.
-- Keep dismiss/apply state synchronized across sidebar and inline comments.
+```ts
+export interface NormalizedReviewResult {
+  comments: ReviewComment[];
+  rawText: string;
+  usage?: ModelUsage;
+  metadata?: Record<string, unknown>;
+}
+```
 
-### Phase 4: Decorations
+Allowed raw runtime formats:
 
-- Add selected finding highlight.
-- Add severity gutter decoration.
-- Clear decorations on dismiss/clear review.
+- plain text containing JSON
+- JSON
+- NDJSON
 
-### Phase 5: Previous Reviews
+Normalization rules:
 
-- Store recent local sessions.
-- Render previous reviews section.
-- Support reopening previous review results.
+- parser behavior must be runtime-agnostic after the adapter hands off output
+- line numbers must be converted into ReviewMP's internal format
+- invalid findings are dropped with debug logs
+- runtime-specific parsing hacks must stay isolated to the adapter or parser normalization layer
 
-## 15. Acceptance Criteria
+## 11. Migration from Current Architecture
 
-- ReviewMP has a dedicated Activity Bar icon and sidebar.
-- Users can start a review from the sidebar.
-- Sidebar shows changed files before or during review.
-- Sidebar shows review progress states.
-- Review findings are grouped by file.
-- File groups show finding counts.
-- Finding rows show severity and short message.
-- Clicking a finding opens the file at the correct line.
-- Inline comments still appear for findings.
-- Applying or dismissing a finding updates both sidebar and inline comments.
-- No chat UI is added.
-- Existing Command Palette review commands continue to work.
-- Existing runtime adapter architecture remains provider-neutral.
+### 11.1 What Changes
 
-## 16. Open Questions
+Replace:
 
-- Should dismissed findings be hidden by default or shown with a resolved state?
-- Should previous reviews persist across VS Code restarts in the first release?
-- Should `FILES TO REVIEW` support selecting a subset of files in the first release?
-- Should `Apply all fixes` be included, or deferred until single-fix synchronization is stable?
-- Should review history be workspace-scoped only, or global per repository?
+- `providerNames = ['opencode', 'custom-cli', 'openai-compatible']`
+- `buildProvider()` hardcoded `switch`
+- provider-specific settings for HTTP endpoint and arbitrary CLI command
+- provider classes that each rebuild the same prompt/review flow
+
+With:
+
+- `runtimeIds = ['claude', 'copilot', 'codex', 'gemini', 'hermes', 'pi', 'opencode']`
+- a runtime registry loaded from built-in manifests
+- a shared CLI runtime adapter
+- a thin normalization layer for runtime-specific output quirks
+
+### 11.2 Compatibility
+
+`opencode` remains supported as one runtime adapter, but it loses its privileged role in the architecture.
+
+ReviewMP should no longer be described as "OpenCode with extra steps." It should be described as a review harness that can run on top of any supported runtime.
+
+## 12. Acceptance Criteria
+
+The spec is satisfied when:
+
+1. ReviewMP can run the same review flow with any supported runtime backend.
+2. The harness code does not branch on runtime name for review behavior.
+3. Adding a new runtime does not require editing orchestration or review-loop logic.
+4. Provider auth and installation remain outside ReviewMP.
+5. Existing OpenCode users still have a supported path.
+6. The public docs describe ReviewMP as provider-agnostic and runtime-backed.
+
+## 13. Explicit Out-of-Scope Backends
+
+These are not part of the target architecture for this rewrite:
+
+- generic `custom-cli` as an unbounded escape hatch
+- direct `openai-compatible` HTTP integration as a first-class default path
+
+They can be reconsidered later only if they fit the same runtime adapter contract without reintroducing provider-specific harness logic.
+
+## 14. References
+
+- Ralph Loop README: `https://github.com/alphaofficial/ralph-loop`
+- Ralph Loop raw README used for backend list and setup model: `https://raw.githubusercontent.com/alphaofficial/ralph-loop/main/README.md`

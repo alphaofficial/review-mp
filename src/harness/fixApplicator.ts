@@ -51,16 +51,24 @@ export class FixApplicator {
         return { success: false, error: `Line ${line + 1} is beyond file length (${lineCount} lines)` };
       }
 
-      const targetLine = document.lineAt(line);
+      const normalizedFix = this.normalizeFix(fix);
+      const fixLines = normalizedFix.split(/\r?\n/);
+      const startLine = this.findReplacementStartLine(document, line, fixLines);
+      const endLine = this.findReplacementEndLine(document, startLine, fixLines);
+      const targetLine = document.lineAt(endLine);
+      const replacement = this.applyTargetIndentation(
+        normalizedFix,
+        document.lineAt(startLine).text.match(/^\s*/)?.[0] ?? ''
+      );
       const range = new vscode.Range(
-        line,
+        startLine,
         0,
-        line,
+        endLine,
         targetLine.text.length
       );
 
       const edit = new vscode.WorkspaceEdit();
-      edit.replace(uri, range, fix);
+      edit.replace(uri, range, replacement);
 
       const success = await vscode.workspace.applyEdit(edit);
 
@@ -88,6 +96,87 @@ export class FixApplicator {
     } catch {
       return undefined;
     }
+  }
+
+  private normalizeFix(fix: string): string {
+    const trimmed = fix.trim();
+    const fencedMatch = trimmed.match(/^```[a-zA-Z0-9_-]*\s*\n([\s\S]*?)\n```$/);
+    return fencedMatch ? fencedMatch[1].trim() : trimmed;
+  }
+
+  private findReplacementStartLine(
+    document: vscode.TextDocument,
+    line: number,
+    fixLines: string[]
+  ): number {
+    if (fixLines.length <= 1) {
+      return line;
+    }
+
+    const firstFixLine = fixLines.find(fixLine => fixLine.trim().length > 0)?.trim();
+    if (!firstFixLine) {
+      return line;
+    }
+
+    const searchStart = Math.max(0, line - 2);
+    const searchEnd = Math.min(document.lineCount - 1, line + 3);
+    for (let candidateLine = searchStart; candidateLine <= searchEnd; candidateLine++) {
+      if (document.lineAt(candidateLine).text.trim() === firstFixLine) {
+        return candidateLine;
+      }
+    }
+
+    return line;
+  }
+
+  private findReplacementEndLine(
+    document: vscode.TextDocument,
+    startLine: number,
+    fixLines: string[]
+  ): number {
+    if (fixLines.length <= 1) {
+      return startLine;
+    }
+
+    let balance = 0;
+    let sawBlockDelimiter = false;
+    const maxScanLine = Math.min(document.lineCount - 1, startLine + 50);
+
+    for (let currentLine = startLine; currentLine <= maxScanLine; currentLine++) {
+      const text = document.lineAt(currentLine).text;
+      for (const char of text) {
+        if (char === '(' || char === '[' || char === '{') {
+          balance++;
+          sawBlockDelimiter = true;
+        } else if (char === ')' || char === ']' || char === '}') {
+          balance--;
+        }
+      }
+
+      const trimmed = text.trim();
+      const endsStatement = trimmed.endsWith(';') || trimmed.endsWith('}') || trimmed.endsWith('],');
+      if (currentLine > startLine && sawBlockDelimiter && balance <= 0 && endsStatement) {
+        return currentLine;
+      }
+    }
+
+    return startLine;
+  }
+
+  private applyTargetIndentation(fix: string, targetIndent: string): string {
+    if (!targetIndent) {
+      return fix;
+    }
+
+    const lines = fix.split(/\r?\n/);
+    const firstContentLine = lines.find(line => line.trim().length > 0);
+    if (!firstContentLine || /^\s/.test(firstContentLine)) {
+      return fix;
+    }
+
+    return lines
+      .map(line => line.trim().length > 0 ? `${targetIndent}${line}` : line)
+      .join('\n');
   }
 }
 

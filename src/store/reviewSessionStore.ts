@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { FindingAction, ReviewFile, ReviewFinding, ReviewHistoryEntry, ReviewSession, ReviewStatus, ReviewType, Severity } from '../types/review';
 
 let findingIdCounter = 0;
+const MAX_SESSION_HISTORY = 5;
 
 function generateFindingId(): string {
   return `finding-${Date.now()}-${++findingIdCounter}`;
@@ -71,6 +72,29 @@ export class ReviewSessionStore extends EventEmitter {
     return [...this.sessionHistory];
   }
 
+  setFilesToReview(filePaths: string[]): void {
+    if (!this.activeSession) {
+      return;
+    }
+
+    const uniqueFilePaths = [...new Set(filePaths.filter(filePath => filePath.trim().length > 0))];
+    for (const filePath of uniqueFilePaths) {
+      if (!this.activeSession.files.has(filePath)) {
+        this.activeSession.files.set(filePath, {
+          path: filePath,
+          status: 'pending',
+          findings: [],
+        });
+      }
+    }
+
+    this.emit('file-status-changed', {
+      sessionId: this.activeSession.id,
+      filePath: '',
+      status: 'pending',
+    });
+  }
+
   updateSessionStatus(status: ReviewStatus): void {
     if (!this.activeSession) {
       return;
@@ -110,18 +134,23 @@ export class ReviewSessionStore extends EventEmitter {
       completedAt: this.activeSession.completedAt,
       findingsCount: this.activeSession.totalFindings,
       duration: this.activeSession.completedAt - this.activeSession.startedAt,
+      files: Array.from(this.activeSession.files.values()).map(file => ({
+        ...file,
+        findings: file.findings.map(finding => ({ ...finding })),
+      })),
+      findings: this.activeSession.findings.map(finding => ({ ...finding })),
     };
 
     this.sessionHistory.unshift(entry);
 
-    if (this.sessionHistory.length > 10) {
-      this.sessionHistory = this.sessionHistory.slice(0, 10);
+    if (this.sessionHistory.length > MAX_SESSION_HISTORY) {
+      this.sessionHistory = this.sessionHistory.slice(0, MAX_SESSION_HISTORY);
     }
 
     this.emit('session-completed', { sessionId: this.activeSession.id });
   }
 
-  addFinding(file: string, line: number, message: string, severity: Severity, fix?: string): ReviewFinding | null {
+  addFinding(file: string, line: number, message: string, severity: Severity, fix?: string, title?: string): ReviewFinding | null {
     if (!this.activeSession) {
       return null;
     }
@@ -130,6 +159,7 @@ export class ReviewSessionStore extends EventEmitter {
       id: generateFindingId(),
       file,
       line,
+      title,
       message,
       severity,
       fix,
@@ -162,10 +192,10 @@ export class ReviewSessionStore extends EventEmitter {
     return finding;
   }
 
-  addFindingsFromComments(comments: Array<{ file: string; line: number; message: string; severity?: Severity; fix?: string }>): ReviewFinding[] {
+  addFindingsFromComments(comments: Array<{ file: string; line: number; title?: string; message: string; severity?: Severity; fix?: string }>): ReviewFinding[] {
     const findings: ReviewFinding[] = [];
     for (const comment of comments) {
-      const finding = this.addFinding(comment.file, comment.line, comment.message, comment.severity || 'info', comment.fix);
+      const finding = this.addFinding(comment.file, comment.line, comment.message, comment.severity || 'info', comment.fix, comment.title);
       if (finding) {
         findings.push(finding);
       }
@@ -220,6 +250,44 @@ export class ReviewSessionStore extends EventEmitter {
       return [];
     }
     return Array.from(this.activeSession.files.values());
+  }
+
+  restoreSessionFromHistory(sessionId: string): ReviewSession | null {
+    const entry = this.sessionHistory.find(historyEntry => historyEntry.sessionId === sessionId);
+    if (!entry) {
+      return null;
+    }
+
+    this.clearActiveSession();
+
+    const files = new Map<string, ReviewFile>();
+    for (const file of entry.files) {
+      files.set(file.path, {
+        ...file,
+        findings: file.findings.map(finding => ({ ...finding })),
+      });
+    }
+
+    const session: ReviewSession = {
+      id: entry.sessionId,
+      title: entry.title,
+      status: 'completed',
+      reviewType: entry.reviewType,
+      branch: entry.branch,
+      startedAt: entry.completedAt - entry.duration,
+      completedAt: entry.completedAt,
+      files,
+      findings: entry.findings.map(finding => ({ ...finding })),
+      totalFindings: entry.findingsCount,
+    };
+
+    this.activeSession = session;
+    for (const finding of session.findings) {
+      this.findingToSession.set(finding.id, session);
+    }
+
+    this.emit('status-changed', { sessionId: session.id, status: session.status });
+    return session;
   }
 
   getFindingsForFile(filePath: string): ReviewFinding[] {

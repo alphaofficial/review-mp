@@ -23,6 +23,9 @@ When reporting issues:
   const guidelines = `## Review Guidelines
 
 Focus on:
+- Review adversarially: look for ways the change can fail while preserving the author's original intent
+- Opportunities to reduce layers, remove unnecessary complexity, and increase reliability
+- Repo-wide policies and established behavior that must remain consistent
 - Bugs and logic errors in the context of how the code is used
 - Off by one mistakes, incorrect conditionals
 - Missing guards, unreachable code paths
@@ -58,8 +61,9 @@ You MUST output ONLY a valid JSON array at the end. No other text after the JSON
 Each comment in the array must have:
 - \`file\`: The relative file path from the repository root (e.g., "src/extension.ts")
 - \`line\`: The 1-based line number where the issue is (use the line numbers shown in the diff)
-- \`message\`: A clear, concise description of the issue with context on WHY it's a problem
-- \`fix\`: (optional) The suggested replacement code
+- \`title\`: A short imperative title, 4-10 words, like "Add error handling for missing articles"
+- \`message\`: A clear explanation of WHY it's a problem. Do not repeat the title.
+- \`fix\`: (optional) The exact replacement/additional code only. Do not put prose, markdown, or explanation in \`fix\`.
 - \`severity\`: One of "error", "warning", "info", or "suggestion"
 
 CRITICAL: Always include the \`file\` field with the relative path from the repository root.`;

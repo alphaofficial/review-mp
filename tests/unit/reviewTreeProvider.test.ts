@@ -81,6 +81,7 @@ vi.mock('vscode', () => {
 
 import { ReviewTreeProvider, ReviewTreeViewId, TreeElement } from '../../src/reviewTreeProvider';
 import { createReviewSessionStore, resetReviewSessionStore, ReviewSessionStore } from '../../src/store/reviewSessionStore';
+import { ReviewStatus } from '../../src/types/review';
 
 describe('ReviewTreeProvider', () => {
   let store: ReviewSessionStore;
@@ -107,6 +108,20 @@ describe('ReviewTreeProvider', () => {
     previousReviewsProvider.dispose();
     store.dispose();
   });
+
+  const getFilesRoot = (): TreeElement =>
+    (filesProvider.getChildren() as TreeElement[])[0];
+
+  const getFileItems = (): TreeElement[] =>
+    getFilesRoot().children || [];
+
+  const getReviewSessionItem = (): TreeElement =>
+    (reviewsProvider.getChildren() as TreeElement[])[0];
+
+  const getReviewFileItems = (): TreeElement[] => {
+    const filesSection = getReviewSessionItem().children?.find(item => item.id === 'review-files');
+    return filesSection?.children || [];
+  };
 
   describe('NEW REVIEW view', () => {
     it('should return 7 command items for new review', () => {
@@ -183,15 +198,17 @@ describe('ReviewTreeProvider', () => {
       store.addFinding('/src/test.ts', 2, 'Warning', 'warning');
 
       const items = filesProvider.getChildren() as TreeElement[];
-      expect(items[0].label).toContain('2 pending');
+      expect(items[0].description).toBe('2!');
+      expect(items[0].children).toHaveLength(2);
     });
 
-    it('should have open file command on file items', () => {
+    it('should reserve row click for expansion when file has findings', () => {
       store.createSession('file');
       store.addFinding('/src/test.ts', 1, 'Error', 'error');
 
       const items = filesProvider.getChildren() as TreeElement[];
-      expect(items[0].command?.command).toBe('vscode.open');
+      expect(items[0].command).toBeUndefined();
+      expect(items[0].collapsibleState).toBe(vscode.TreeItemCollapsibleState.Expanded);
     });
 
     it('should update when findings are added', () => {
@@ -218,10 +235,10 @@ describe('ReviewTreeProvider', () => {
       const items = reviewsProvider.getChildren() as TreeElement[];
       expect(items).toHaveLength(1);
       expect(items[0].label).toContain('My Review');
-      expect(items[0].label).toContain('Reviewing');
+      expect(items[0].description).toContain('Reviewing');
     });
 
-    it('should group findings by file', () => {
+    it('should keep review status as a compact summary row', () => {
       store.createSession('branch');
       store.addFinding('/src/file1.ts', 1, 'Error 1', 'error');
       store.addFinding('/src/file1.ts', 5, 'Error 2', 'warning');
@@ -229,23 +246,21 @@ describe('ReviewTreeProvider', () => {
 
       const items = reviewsProvider.getChildren() as TreeElement[];
       expect(items).toHaveLength(1);
-      expect(items[0].children).toHaveLength(2);
-
-      const fileGroups = items[0].children!;
-      expect(fileGroups.find(f => f.file?.path === '/src/file1.ts')?.children).toHaveLength(2);
-      expect(fileGroups.find(f => f.file?.path === '/src/file2.ts')?.children).toHaveLength(1);
+      expect(items[0].label).toBe('Branch Review: current');
+      expect(items[0].description).toContain('3 findings');
+      expect(getReviewFileItems()).toHaveLength(2);
     });
 
-    it('should show finding severity and line number', () => {
+    it('should show finding severity and line number in files view', () => {
       store.createSession('file');
       store.addFinding('/src/test.ts', 42, 'Test error', 'error');
 
-      const items = reviewsProvider.getChildren() as TreeElement[];
-      const fileGroup = items[0].children![0];
+      const items = filesProvider.getChildren() as TreeElement[];
+      const fileGroup = items[0];
       const finding = fileGroup.children![0];
 
-      expect(finding.label).toContain('Line 42');
-      expect(finding.label).toContain('Test error');
+      expect(finding.tooltip).toContain('Line 42');
+      expect(finding.label).toBe('Test error');
       expect(finding.finding?.line).toBe(42);
     });
 
@@ -254,8 +269,8 @@ describe('ReviewTreeProvider', () => {
       store.addFinding('/src/test.ts', 1, 'Error with fix', 'error', 'const x = 1;');
       store.addFinding('/src/test.ts', 2, 'Error without fix', 'error');
 
-      const items = reviewsProvider.getChildren() as TreeElement[];
-      const fileGroup = items[0].children![0];
+      const items = filesProvider.getChildren() as TreeElement[];
+      const fileGroup = items[0];
       const findings = fileGroup.children!;
 
       expect(findings[0].contextValue).toBe('findingWithFix');
@@ -266,8 +281,8 @@ describe('ReviewTreeProvider', () => {
       store.createSession('file');
       const finding = store.addFinding('/src/test.ts', 1, 'Error', 'error');
 
-      const items = reviewsProvider.getChildren() as TreeElement[];
-      const fileGroup = items[0].children![0];
+      const items = filesProvider.getChildren() as TreeElement[];
+      const fileGroup = items[0];
       const findingItem = fileGroup.children![0];
 
       expect(findingItem.command?.command).toBe('reviewmp.openFinding');
@@ -275,10 +290,10 @@ describe('ReviewTreeProvider', () => {
     });
 
     it('should display all review statuses correctly', () => {
-      const statusLabels: Record<string, string> = {
+      const statusLabels: Record<ReviewStatus, string> = {
         idle: 'Idle',
-        settingUp: 'Setting up...',
-        analyzing: 'Analyzing...',
+        settingUp: 'Setting up',
+        analyzing: 'Analyzing',
         reviewing: 'Reviewing',
         completed: 'Completed',
         failed: 'Failed',
@@ -289,19 +304,19 @@ describe('ReviewTreeProvider', () => {
         store.updateSessionStatus(status);
 
         const items = reviewsProvider.getChildren() as TreeElement[];
-        expect(items[0].label).toContain(statusLabels[status]);
+        expect(items[0].description).toContain(statusLabels[status]);
       });
     });
 
-    it('should show finding counts in file group labels', () => {
+    it('should show finding counts in file descriptions', () => {
       store.createSession('file');
       store.addFinding('/src/test.ts', 1, 'Error 1', 'error');
       store.addFinding('/src/test.ts', 2, 'Error 2', 'error');
 
-      const items = reviewsProvider.getChildren() as TreeElement[];
-      const fileGroup = items[0].children![0];
+      const items = filesProvider.getChildren() as TreeElement[];
+      const fileGroup = items[0];
 
-      expect(fileGroup.label).toContain('2 findings');
+      expect(fileGroup.description).toBe('2!');
     });
   });
 
@@ -352,7 +367,7 @@ describe('ReviewTreeProvider', () => {
       }
 
       const items = previousReviewsProvider.getChildren() as TreeElement[];
-      expect(items.length).toBeLessThanOrEqual(10);
+      expect(items.length).toBeLessThanOrEqual(5);
     });
 
     it('should display findings count in history label', () => {
@@ -363,16 +378,15 @@ describe('ReviewTreeProvider', () => {
       store.updateSessionStatus('completed');
 
       const items = previousReviewsProvider.getChildren() as TreeElement[];
-      expect(items[0].label).toContain('3 findings');
+      expect(items[0].description).toContain('3 findings');
     });
 
-    it('should display date in history label', () => {
+    it('should display relative time in history label', () => {
       store.createSession('file', 'Dated Review');
       store.updateSessionStatus('completed');
 
       const items = previousReviewsProvider.getChildren() as TreeElement[];
-      const today = new Date().toLocaleDateString();
-      expect(items[0].label).toContain(today);
+      expect(items[0].description).toContain('ago');
     });
 
     it('should display duration in history label', () => {
@@ -380,11 +394,28 @@ describe('ReviewTreeProvider', () => {
       store.updateSessionStatus('completed');
 
       const items = previousReviewsProvider.getChildren() as TreeElement[];
-      expect(items[0].label).toContain('ms');
+      expect(items[0].description).toContain('ms');
     });
   });
 
   describe('refresh behavior', () => {
+    it('should refresh previous reviews periodically for time ago labels', () => {
+      vi.useFakeTimers();
+
+      previousReviewsProvider.dispose();
+      previousReviewsProvider = new ReviewTreeProvider('reviewmp.previousReviews', store);
+      store.createSession('file');
+      store.updateSessionStatus('completed');
+
+      const spy = vi.fn();
+      previousReviewsProvider.onDidChangeTreeData(spy);
+
+      vi.advanceTimersByTime(30_000);
+
+      expect(spy).toHaveBeenCalled();
+      vi.useRealTimers();
+    });
+
     it('should emit change event when session is created with previous session present', () => {
       store.createSession('file');
       const spy = vi.fn();
@@ -446,10 +477,10 @@ describe('ReviewTreeProvider', () => {
       store.createSession('branch');
       store.addFinding('/src/test.ts', 1, 'Error', 'error');
 
-      const items = reviewsProvider.getChildren() as TreeElement[];
+      const items = filesProvider.getChildren() as TreeElement[];
       const sessionItem = items[0];
 
-      const treeItem = reviewsProvider.getTreeItem(sessionItem);
+      const treeItem = filesProvider.getTreeItem(sessionItem);
       expect(treeItem.collapsibleState).toBe(vscode.TreeItemCollapsibleState.Expanded);
     });
 
@@ -457,10 +488,10 @@ describe('ReviewTreeProvider', () => {
       store.createSession('file');
       store.addFinding('/src/test.ts', 1, 'Error', 'error', 'fix');
 
-      const items = reviewsProvider.getChildren() as TreeElement[];
-      const findingItem = items[0].children![0].children![0];
+      const items = filesProvider.getChildren() as TreeElement[];
+      const findingItem = items[0].children![0];
 
-      const treeItem = reviewsProvider.getTreeItem(findingItem);
+      const treeItem = filesProvider.getTreeItem(findingItem);
       expect(treeItem.contextValue).toBe('findingWithFix');
     });
 
@@ -468,10 +499,10 @@ describe('ReviewTreeProvider', () => {
       store.createSession('file');
       store.addFinding('/src/test.ts', 1, 'Error', 'error');
 
-      const items = reviewsProvider.getChildren() as TreeElement[];
-      const findingItem = items[0].children![0].children![0];
+      const items = filesProvider.getChildren() as TreeElement[];
+      const findingItem = items[0].children![0];
 
-      const treeItem = reviewsProvider.getTreeItem(findingItem);
+      const treeItem = filesProvider.getTreeItem(findingItem);
       expect(treeItem.contextValue).toBe('finding');
     });
   });
@@ -493,21 +524,24 @@ describe('ReviewTreeProvider', () => {
     });
   });
 
-  describe('relative path formatting', () => {
-    it('should shorten long paths', () => {
+  describe('file name formatting', () => {
+    it('should show the file name for long paths', () => {
       store.createSession('file');
       store.addFinding('/Users/name/project/src/components/Button.tsx', 1, 'Error', 'error');
 
       const items = filesProvider.getChildren() as TreeElement[];
-      expect(items[0].label).toContain('...components/Button.tsx');
+      expect(items[0].label).toBe('Button.tsx');
+      expect(items[0].tooltip).toBe('/Users/name/project/src/components/Button.tsx');
     });
 
-    it('should not shorten short paths', () => {
+    it('should show the file name for short paths', () => {
       store.createSession('file');
       store.addFinding('/src/test.ts', 1, 'Error', 'error');
 
       const items = filesProvider.getChildren() as TreeElement[];
-      expect(items[0].label).toBe('/src/test.ts (1 pending)');
+      expect(items[0].label).toBe('test.ts');
+      expect(items[0].tooltip).toBe('/src/test.ts');
+      expect(items[0].description).toBe('1!');
     });
   });
 
@@ -519,8 +553,7 @@ describe('ReviewTreeProvider', () => {
       store.addFinding('/src/info.ts', 3, 'Info', 'info');
       store.addFinding('/src/suggestion.ts', 4, 'Suggestion', 'suggestion');
 
-      const items = reviewsProvider.getChildren() as TreeElement[];
-      const fileGroups = items[0].children!;
+      const fileGroups = filesProvider.getChildren() as TreeElement[];
       const findings = fileGroups.flatMap(f => f.children!);
 
       const errorFinding = findings.find(f => f.finding?.severity === 'error');
@@ -528,10 +561,10 @@ describe('ReviewTreeProvider', () => {
       const infoFinding = findings.find(f => f.finding?.severity === 'info');
       const suggestionFinding = findings.find(f => f.finding?.severity === 'suggestion');
 
-      expect(errorFinding?.icon).toBe('$(error)');
-      expect(warningFinding?.icon).toBe('$(warning)');
-      expect(infoFinding?.icon).toBe('$(info)');
-      expect(suggestionFinding?.icon).toBe('$(lightbulb)');
+      expect(errorFinding?.icon).toBe('error');
+      expect(warningFinding?.icon).toBe('warning');
+      expect(infoFinding?.icon).toBe('info');
+      expect(suggestionFinding?.icon).toBe('lightbulb');
     });
 
     it('should have correct icons for different file statuses', () => {
@@ -543,8 +576,8 @@ describe('ReviewTreeProvider', () => {
       const items = filesProvider.getChildren() as TreeElement[];
       const fileMap = new Map(items.map(i => [i.file?.path, i]));
 
-      expect(fileMap.get('/src/pending.ts')?.icon).toBe('$(check)');
-      expect(fileMap.get('/src/reviewing.ts')?.icon).toBe('$(eye)');
+      expect(fileMap.get('/src/pending.ts')?.icon).toBe('check');
+      expect(fileMap.get('/src/reviewing.ts')?.icon).toBe('eye');
     });
 
     it('should show correct icon for failed file status', () => {
@@ -555,12 +588,12 @@ describe('ReviewTreeProvider', () => {
       const items = filesProvider.getChildren() as TreeElement[];
       const fileMap = new Map(items.map(i => [i.file?.path, i]));
 
-      expect(fileMap.get('/src/failed.ts')?.icon).toBe('$(error)');
+      expect(fileMap.get('/src/failed.ts')?.icon).toBe('error');
     });
 
-    it('should have vscode.open command with correct file path', () => {
+    it('should have vscode.open command for file rows without findings', () => {
       store.createSession('file');
-      store.addFinding('/src/test.ts', 1, 'Error', 'error');
+      store.setFilesToReview(['/src/test.ts']);
 
       const items = filesProvider.getChildren() as TreeElement[];
       const fileItem = items[0];
@@ -574,12 +607,12 @@ describe('ReviewTreeProvider', () => {
       store.addFinding('/src/test.ts', 1, 'Error', 'error');
 
       let items = filesProvider.getChildren() as TreeElement[];
-      expect(items[0].icon).toBe('$(eye)');
+      expect(items[0].icon).toBe('eye');
 
       store.updateFindingStatus(store.getFindingsForFile('/src/test.ts')[0].id, 'apply');
 
       items = filesProvider.getChildren() as TreeElement[];
-      expect(items[0].icon).toBe('$(check)');
+      expect(items[0].icon).toBe('check');
     });
 
     it('should update file status icons when all findings are dismissed', () => {
@@ -588,13 +621,13 @@ describe('ReviewTreeProvider', () => {
       store.addFinding('/src/test.ts', 2, 'Warning', 'warning');
 
       let items = filesProvider.getChildren() as TreeElement[];
-      expect(items[0].icon).toBe('$(eye)');
+      expect(items[0].icon).toBe('eye');
 
       store.updateFindingStatus(store.getFindingsForFile('/src/test.ts')[0].id, 'dismiss');
       store.updateFindingStatus(store.getFindingsForFile('/src/test.ts')[1].id, 'dismiss');
 
       items = filesProvider.getChildren() as TreeElement[];
-      expect(items[0].icon).toBe('$(check)');
+      expect(items[0].icon).toBe('check');
     });
   });
 });

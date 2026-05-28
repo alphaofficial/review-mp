@@ -70,6 +70,40 @@ describe('ReviewSessionStore', () => {
     });
   });
 
+  describe('setFilesToReview', () => {
+    it('should seed files before findings are added', () => {
+      store.createSession('staged');
+
+      store.setFilesToReview(['/test/a.ts', '/test/b.ts']);
+
+      const files = store.getFilesForSession();
+      expect(files).toHaveLength(2);
+      expect(files.map(file => file.path).sort()).toEqual(['/test/a.ts', '/test/b.ts']);
+      expect(files.every(file => file.status === 'pending')).toBe(true);
+      expect(files.every(file => file.findings.length === 0)).toBe(true);
+    });
+
+    it('should not duplicate seeded files', () => {
+      store.createSession('staged');
+
+      store.setFilesToReview(['/test/a.ts', '/test/a.ts']);
+
+      expect(store.getFilesForSession()).toHaveLength(1);
+    });
+
+    it('should preserve seeded file entry when findings arrive', () => {
+      store.createSession('staged');
+      store.setFilesToReview(['/test/a.ts']);
+
+      store.addFinding('/test/a.ts', 3, 'Error', 'error');
+
+      const files = store.getFilesForSession();
+      expect(files).toHaveLength(1);
+      expect(files[0].findings).toHaveLength(1);
+      expect(files[0].status).toBe('reviewing');
+    });
+  });
+
   describe('updateSessionStatus', () => {
     it('should update session status', () => {
       store.createSession('file');
@@ -446,7 +480,7 @@ describe('ReviewSessionStore', () => {
       expect(history[1].title).toBe('Review 1');
     });
 
-    it('should limit history to 10 entries', () => {
+    it('should limit history to 5 entries', () => {
       for (let i = 0; i < 15; i++) {
         store.createSession('file', `Review ${i}`);
         store.addFinding('/test/file.ts', i, 'Error', 'error');
@@ -454,7 +488,7 @@ describe('ReviewSessionStore', () => {
       }
 
       const history = store.getSessionHistory();
-      expect(history).toHaveLength(10);
+      expect(history).toHaveLength(5);
       expect(history[0].title).toBe('Review 14');
     });
 
@@ -467,6 +501,40 @@ describe('ReviewSessionStore', () => {
       const history = store.getSessionHistory();
       expect(history[0].findingsCount).toBe(1);
       expect(history[0].duration).toBeGreaterThanOrEqual(0);
+    });
+
+    it('should snapshot files and findings for previous review restore', () => {
+      store.createSession('lastCommit', 'Restorable Review');
+      store.setFilesToReview(['/test/file.ts']);
+      store.addFinding('/test/file.ts', 3, 'Error', 'error');
+      store.updateSessionStatus('completed');
+
+      const history = store.getSessionHistory();
+      expect(history[0].files).toHaveLength(1);
+      expect(history[0].findings).toHaveLength(1);
+    });
+  });
+
+  describe('restoreSessionFromHistory', () => {
+    it('should restore a previous review as active session', () => {
+      store.createSession('lastCommit', 'Previous Review');
+      store.setFilesToReview(['/test/file.ts']);
+      store.addFinding('/test/file.ts', 3, 'Error', 'error');
+      store.updateSessionStatus('completed');
+
+      const sessionId = store.getSessionHistory()[0].sessionId;
+      store.createSession('file', 'Current Review');
+
+      const restored = store.restoreSessionFromHistory(sessionId);
+
+      expect(restored?.title).toBe('Previous Review');
+      expect(store.getActiveSession()?.id).toBe(sessionId);
+      expect(store.getFilesForSession()).toHaveLength(1);
+      expect(store.getFindingsForFile('/test/file.ts')).toHaveLength(1);
+    });
+
+    it('should return null for an unknown previous review', () => {
+      expect(store.restoreSessionFromHistory('missing')).toBeNull();
     });
   });
 
@@ -531,6 +599,8 @@ describe('ReviewSession type exports', () => {
       completedAt: Date.now(),
       findingsCount: 5,
       duration: 1000,
+      files: [],
+      findings: [],
     };
 
     expect(entry.findingsCount).toBe(5);

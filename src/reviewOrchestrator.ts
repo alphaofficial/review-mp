@@ -81,6 +81,9 @@ export class ReviewOrchestrator implements vscode.Disposable {
     const startLine = request.startLine ?? 0;
 
     const session = this.store.createSession(request.reviewType, undefined, undefined, undefined);
+    if (request.filePath) {
+      this.store.setFilesToReview([request.filePath]);
+    }
     this.store.updateSessionStatus('settingUp');
 
     await vscode.window.withProgress(
@@ -151,6 +154,7 @@ export class ReviewOrchestrator implements vscode.Disposable {
         try {
           this.store.updateSessionStatus('analyzing');
           const diffResult = await this.diffCollector.getDiff(type, token);
+          this.store.setFilesToReview(this.getFilePathsFromDiff(diffResult.diff));
 
           if (token.isCancellationRequested) {
             this.store.clearActiveSession();
@@ -201,6 +205,7 @@ export class ReviewOrchestrator implements vscode.Disposable {
 
   private async reviewPullRequest(formattedDiff: string, token?: vscode.CancellationToken): Promise<void> {
     const clusteringResult = clusterDiff({ diff: formattedDiff, formattedDiff });
+    this.store.setFilesToReview(clusteringResult.clusters.flatMap(cluster => cluster.files));
 
     if (clusteringResult.totalFiles === 0) {
       this.store.updateSessionStatus('completed');
@@ -349,9 +354,10 @@ export class ReviewOrchestrator implements vscode.Disposable {
     }
 
     for (const [filePath, fileComments] of commentsByFile) {
-      const uri = vscode.Uri.joinPath(workspaceFolder.uri, filePath);
+      const normalizedFilePath = this.normalizeDiffFilePath(filePath);
+      const uri = vscode.Uri.joinPath(workspaceFolder.uri, normalizedFilePath);
 
-      const ext = filePath.split('.').pop() || '';
+      const ext = normalizedFilePath.split('.').pop() || '';
       const languageMap: Record<string, string> = {
         ts: 'typescript',
         tsx: 'typescriptreact',
@@ -371,9 +377,43 @@ export class ReviewOrchestrator implements vscode.Disposable {
       };
       const languageId = languageMap[ext] || ext;
 
-      const findings = this.store.addFindingsFromComments(fileComments);
+      const findings = this.store.addFindingsFromComments(
+        fileComments.map(comment => ({
+          ...comment,
+          file: uri.fsPath,
+        }))
+      );
       this.commentController.addComments(uri, findings, languageId);
     }
+  }
+
+  private normalizeDiffFilePath(filePath: string): string {
+    return filePath.replace(/^\/+/, '');
+  }
+
+  private getFilePathsFromDiff(diff: string): string[] {
+    const filePaths: string[] = [];
+    const regex = /^diff --git a\/(.+?) b\/(.+)$/gm;
+    let match: RegExpExecArray | null;
+
+    while ((match = regex.exec(diff)) !== null) {
+      filePaths.push(this.resolveChangedFilePath(match[1], match[2]));
+    }
+
+    return filePaths.map(filePath => this.resolveWorkspaceFilePath(filePath));
+  }
+
+  private resolveChangedFilePath(oldPath: string, newPath: string): string {
+    return newPath === '/dev/null' ? oldPath : newPath;
+  }
+
+  private resolveWorkspaceFilePath(filePath: string): string {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      return this.normalizeDiffFilePath(filePath);
+    }
+
+    return vscode.Uri.joinPath(workspaceFolder.uri, this.normalizeDiffFilePath(filePath)).fsPath;
   }
 
   dispose(): void {

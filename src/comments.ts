@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { ModelProvider } from './providers/modelProvider';
 import { FixApplicator, createFixApplicator } from './harness/fixApplicator';
-import { ReviewFinding, ReviewSessionStore } from './store/reviewSessionStore';
+import { ReviewFinding } from './types/review';
+import { ReviewSessionStore } from './store/reviewSessionStore';
 
 export interface ReviewComment {
   file: string;
@@ -14,6 +15,8 @@ export interface ReviewComment {
 interface CommentData {
   uri: vscode.Uri;
   line: number;
+  title?: string;
+  message: string;
   fix?: string;
   thread: vscode.CommentThread;
   findingId: string;
@@ -43,6 +46,12 @@ export class ReviewCommentController implements vscode.Disposable {
       ),
       vscode.commands.registerCommand('reviewmp.rejectComment', (comment: vscode.Comment) =>
         this.rejectComment(comment)
+      ),
+      vscode.commands.registerCommand('reviewmp.copyComment', (comment: vscode.Comment) =>
+        this.copyComment(comment)
+      ),
+      vscode.commands.registerCommand('reviewmp.collapseComment', (comment: vscode.Comment) =>
+        this.collapseComment(comment)
       )
     );
 
@@ -83,7 +92,7 @@ export class ReviewCommentController implements vscode.Disposable {
       const range = new vscode.Range(finding.line, 0, finding.line, 0);
       const thread = this.controller.createCommentThread(uri, range, []);
 
-      const body = this.createCommentBody(finding.message, finding.fix, languageId);
+      const body = this.createCommentBody(finding, languageId);
 
       const reviewComment: vscode.Comment = {
         body,
@@ -95,6 +104,8 @@ export class ReviewCommentController implements vscode.Disposable {
       const commentData: CommentData = {
         uri,
         line: finding.line,
+        title: finding.title,
+        message: finding.message,
         fix: finding.fix,
         thread,
         findingId: finding.id,
@@ -106,7 +117,7 @@ export class ReviewCommentController implements vscode.Disposable {
       thread.comments = [reviewComment];
       thread.canReply = false;
       thread.label = this.getSeverityLabel(finding.severity);
-      thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
+      thread.collapsibleState = vscode.CommentThreadCollapsibleState.Collapsed;
 
       threads.push(thread);
     }
@@ -114,31 +125,116 @@ export class ReviewCommentController implements vscode.Disposable {
     this.threads.set(uri.toString(), threads);
   }
 
-  private createCommentBody(message: string, fix?: string, languageId?: string): vscode.MarkdownString {
+  revealFinding(findingId: string): boolean {
+    const comment = this.findingIdToComment.get(findingId);
+    if (!comment) {
+      return false;
+    }
+
+    const data = this.commentDataMap.get(comment);
+    if (!data) {
+      return false;
+    }
+
+    data.thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
+    return true;
+  }
+
+  private createCommentBody(finding: ReviewFinding, languageId?: string): vscode.MarkdownString {
     const md = new vscode.MarkdownString();
     md.isTrusted = true;
     md.supportHtml = false;
 
-    md.appendMarkdown(message);
+    const { title, body } = this.getCommentText(finding);
 
-    if (fix) {
-      md.appendMarkdown('\n\n**Suggested fix:**\n');
-      md.appendCodeblock(fix, languageId || '');
+    md.appendMarkdown(`**${title}**`);
+
+    if (body) {
+      md.appendMarkdown(`\n\n${body}`);
+    }
+
+    if (finding.fix) {
+      if (this.isLikelyCode(finding.fix)) {
+        md.appendMarkdown('\n\n');
+        md.appendCodeblock(finding.fix.trim(), this.getFixLanguageId(finding.fix, languageId));
+      } else {
+        md.appendMarkdown(`\n\n${finding.fix.trim()}`);
+      }
     }
 
     return md;
   }
 
+  private getCommentText(finding: ReviewFinding): { title: string; body: string } {
+    if (finding.title?.trim()) {
+      return {
+        title: finding.title.trim(),
+        body: finding.message.trim(),
+      };
+    }
+
+    return this.splitCommentMessage(finding.message);
+  }
+
+  private splitCommentMessage(message: string): { title: string; body: string } {
+    const trimmed = message.trim();
+    const separatorIndex = trimmed.indexOf(':');
+    if (separatorIndex > 0 && separatorIndex < 90) {
+      return {
+        title: trimmed.slice(0, separatorIndex).trim(),
+        body: trimmed.slice(separatorIndex + 1).trim(),
+      };
+    }
+
+    const firstSentenceMatch = trimmed.match(/^(.{20,90}?[.!?])\s+(.+)$/s);
+    if (firstSentenceMatch) {
+      return {
+        title: firstSentenceMatch[1].trim(),
+        body: firstSentenceMatch[2].trim(),
+      };
+    }
+
+    return {
+      title: this.truncateTitle(trimmed),
+      body: trimmed.length > 90 ? trimmed : '',
+    };
+  }
+
+  private truncateTitle(message: string): string {
+    if (message.length <= 90) {
+      return message;
+    }
+    return `${message.slice(0, 87).trim()}...`;
+  }
+
+  private isLikelyCode(fix: string): boolean {
+    const trimmed = fix.trim();
+    if (trimmed.includes('\n')) {
+      return true;
+    }
+
+    return /[{}();=<>]|\b(const|let|var|if|return|await|async|function|class|import|export)\b/.test(trimmed);
+  }
+
+  private getFixLanguageId(fix: string, languageId?: string): string {
+    const hasDiffMarkers = fix
+      .trim()
+      .split('\n')
+      .some(line => line.startsWith('+') || line.startsWith('-'));
+
+    return hasDiffMarkers ? 'diff' : languageId || '';
+  }
+
   private getSeverityLabel(severity?: string): string {
     switch (severity) {
       case 'error':
-        return 'Error';
+        return 'Potential Issue';
       case 'warning':
         return 'Warning';
       case 'info':
         return 'Info';
       case 'suggestion':
-        return 'Suggestion';
+        return 'Refactor Suggestion';
       default:
         return 'Review';
     }
@@ -201,6 +297,27 @@ export class ReviewCommentController implements vscode.Disposable {
     data.thread.dispose();
     this.removeThreadFromMap(data.uri, data.thread);
     this.findingIdToComment.delete(data.findingId);
+  }
+
+  private async copyComment(comment: vscode.Comment) {
+    const data = this.commentDataMap.get(comment);
+    if (!data) {
+      return;
+    }
+
+    const text = data.fix
+      ? `${data.title ? `${data.title}\n\n` : ''}${data.message}\n\n${data.fix}`
+      : data.message;
+    await vscode.env.clipboard.writeText(text);
+  }
+
+  private collapseComment(comment: vscode.Comment) {
+    const data = this.commentDataMap.get(comment);
+    if (!data) {
+      return;
+    }
+
+    data.thread.collapsibleState = vscode.CommentThreadCollapsibleState.Collapsed;
   }
 
   private removeThreadFromMap(uri: vscode.Uri, thread: vscode.CommentThread) {

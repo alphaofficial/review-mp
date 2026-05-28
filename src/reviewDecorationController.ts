@@ -46,20 +46,6 @@ export class ReviewDecorationController implements vscode.Disposable {
 
     this.decorationTypes.set('selection', this.selectionHighlightDecoration);
 
-    const gutterColors: Record<Severity, string> = {
-      error: 'editorGutter.annotationForeground',
-      warning: 'editorGutter.annotationForeground',
-      info: 'editorGutter.annotationForeground',
-      suggestion: 'editorGutter.annotationForeground',
-    };
-
-    const gutterIcons: Record<Severity, string> = {
-      error: '$(error)',
-      warning: '$(warning)',
-      info: '$(info)',
-      suggestion: '$(lightbulb)',
-    };
-
     const severityColors: Record<Severity, string> = {
       error: '#f14c4c',
       warning: '#cca700',
@@ -72,8 +58,9 @@ export class ReviewDecorationController implements vscode.Disposable {
         isWholeLine: false,
         overviewRulerColor: severityColors[severity],
         overviewRulerLane: vscode.OverviewRulerLane.Right,
-        gutterIcon: gutterIcons[severity],
-        gutterIconSize: '80%',
+        borderStyle: 'solid',
+        borderWidth: '0 0 0 2px',
+        borderColor: severityColors[severity],
       });
       this.decorationTypes.set(`gutter-${severity}`, decoration);
       this.gutterDecorations.set(severity, decoration);
@@ -120,7 +107,7 @@ export class ReviewDecorationController implements vscode.Disposable {
     }, 50);
   }
 
-  private onVisibleEditorsChanged(editors: vscode.TextEditor[]): void {
+  private onVisibleEditorsChanged(editors: readonly vscode.TextEditor[]): void {
     this.applyAllDecorations();
   }
 

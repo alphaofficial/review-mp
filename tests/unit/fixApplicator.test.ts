@@ -1,4 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
+import * as vscode from 'vscode';
 import { FixApplicator } from '../../src/harness/fixApplicator';
 
 vi.mock('vscode', () => ({
@@ -6,16 +7,27 @@ vi.mock('vscode', () => ({
     openTextDocument: vi.fn(),
     applyEdit: vi.fn(),
   },
-  Range: vi.fn(),
-  WorkspaceEdit: vi.fn().mockImplementation(() => ({
+  Range: vi.fn().mockImplementation(function (startLine: number, startChar: number, endLine: number, endChar: number) {
+    return { startLine, startChar, endLine, endChar };
+  }),
+  WorkspaceEdit: vi.fn().mockImplementation(function () {
+    return {
     replace: vi.fn(),
-  })),
+    };
+  }),
   Uri: {
     file: vi.fn(),
   },
 }));
 
 describe('FixApplicator', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (vscode.Uri.file as any).mockImplementation((path: string) => ({ fsPath: path }));
+    (vscode.workspace.openTextDocument as any).mockRejectedValue(new Error('File not found'));
+    (vscode.workspace.applyEdit as any).mockResolvedValue(true);
+  });
+
   describe('validateFix', () => {
     it('should return valid for correct inputs', async () => {
       const applicator = new FixApplicator();
@@ -95,6 +107,43 @@ describe('FixApplicator', () => {
       const result = await applicator.applyFix('/path/to/file.ts', 10, '');
       expect(result.success).toBe(false);
       expect(result.error).toBe('Fix content is empty or invalid');
+    });
+
+    it('should replace the full nearby statement for multi-line fixes', async () => {
+      const applicator = new FixApplicator();
+      const lines = [
+        'if (status === "ACTIVE") {',
+        '  // ensure ONLINE payment method is enabled',
+        '  paymentSettings.paymentMethods = [',
+        '    ...paymentSettings.paymentMethods,',
+        '    "ONLINE",',
+        '  ];',
+        '}',
+      ];
+      (vscode.workspace.openTextDocument as any).mockResolvedValue({
+        lineCount: lines.length,
+        lineAt: (line: number) => ({ text: lines[line] }),
+      });
+
+      const fix = `paymentSettings.paymentMethods = [
+  ...(paymentSettings.paymentMethods ?? []),
+  "ONLINE",
+];`;
+
+      const result = await applicator.applyFix('/path/to/file.ts', 1, fix);
+
+      expect(result.success).toBe(true);
+      expect(vscode.Range).toHaveBeenCalledWith(2, 0, 5, 4);
+      const range = (vscode.Range as any).mock.results[0].value;
+      const edit = (vscode.WorkspaceEdit as any).mock.results[0].value;
+      expect(edit.replace).toHaveBeenCalledWith(
+        expect.objectContaining({ fsPath: '/path/to/file.ts' }),
+        range,
+        `  paymentSettings.paymentMethods = [
+    ...(paymentSettings.paymentMethods ?? []),
+    "ONLINE",
+  ];`
+      );
     });
   });
 

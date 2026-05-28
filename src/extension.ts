@@ -242,9 +242,10 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      const uri = vscode.Uri.file(targetFilePath);
+      const uri = resolveReviewFileUri(targetFilePath);
       const document = await vscode.workspace.openTextDocument(uri);
       await vscode.window.showTextDocument(document, { preserveFocus: false });
+      commentController.revealFinding(finding.id);
       const editor = vscode.window.activeTextEditor;
       if (editor) {
         const line = Math.max(0, finding.line - 1);
@@ -299,7 +300,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       try {
-        const result = await fixApplicator.applyFix(filePath, finding.line, finding.fix);
+        const result = await fixApplicator.applyFix(resolveReviewFileUri(filePath).fsPath, finding.line, finding.fix);
         if (result.success) {
           store.updateFindingStatus(findingId, 'apply');
           vscode.window.showInformationMessage('Fix applied successfully');
@@ -352,6 +353,21 @@ export function activate(context: vscode.ExtensionContext) {
   const openReviewPanelCommand = vscode.commands.registerCommand(
     'reviewmp.openReviewPanel',
     async (sessionId?: string) => {
+      if (sessionId) {
+        const restoredSession = store.restoreSessionFromHistory(sessionId);
+        if (!restoredSession) {
+          vscode.window.showWarningMessage('Previous review not found');
+          return;
+        }
+
+        commentController.clearAllComments();
+        for (const file of restoredSession.files.values()) {
+          if (file.findings.length > 0) {
+            commentController.addComments(vscode.Uri.file(file.path), file.findings);
+          }
+        }
+      }
+
       await vscode.commands.executeCommand('reviewmp.reviews.focus');
     }
   );
@@ -376,6 +392,19 @@ export function activate(context: vscode.ExtensionContext) {
     decorationController,
     store
   );
+}
+
+function resolveReviewFileUri(filePath: string): vscode.Uri {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    return vscode.Uri.file(filePath);
+  }
+
+  if (filePath.startsWith(workspaceFolder.uri.fsPath)) {
+    return vscode.Uri.file(filePath);
+  }
+
+  return vscode.Uri.joinPath(workspaceFolder.uri, filePath.replace(/^\/+/, ''));
 }
 
 export function deactivate() {

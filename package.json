@@ -59,8 +59,18 @@
       },
       {
         "command": "reviewmp.rejectComment",
-        "title": "Reject",
-        "icon": "$(x)"
+        "title": "Dismiss",
+        "icon": "$(circle-slash)"
+      },
+      {
+        "command": "reviewmp.copyComment",
+        "title": "Copy Comment",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "reviewmp.collapseComment",
+        "title": "Collapse",
+        "icon": "$(chevron-up)"
       },
       {
         "command": "reviewmp.selectRuntime",
@@ -100,12 +110,22 @@
         {
           "command": "reviewmp.acceptFix",
           "group": "inline@1",
-          "when": "commentController == reviewmp && comment =~ /with-fix/"
+          "when": "commentController == reviewmp && comment == reviewmp-with-fix"
         },
         {
           "command": "reviewmp.rejectComment",
           "group": "inline@2",
-          "when": "commentController == reviewmp"
+          "when": "commentController == reviewmp && (comment == reviewmp || comment == reviewmp-with-fix)"
+        },
+        {
+          "command": "reviewmp.copyComment",
+          "group": "inline@3",
+          "when": "commentController == reviewmp && (comment == reviewmp || comment == reviewmp-with-fix)"
+        },
+        {
+          "command": "reviewmp.collapseComment",
+          "group": "inline@4",
+          "when": "commentController == reviewmp && (comment == reviewmp || comment == reviewmp-with-fix)"
         }
       ],
       "editor/context": [
@@ -168,7 +188,7 @@
         {
           "id": "reviewmp",
           "title": "ReviewMP",
-          "icon": "$(github-inverted)"
+          "icon": "resources/reviewmp.svg"
         }
       ]
     },
@@ -176,19 +196,23 @@
       "reviewmp": [
         {
           "id": "reviewmp.newReview",
-          "name": "NEW REVIEW"
+          "name": "NEW REVIEW",
+          "icon": "$(git-compare)"
         },
         {
           "id": "reviewmp.filesToReview",
-          "name": "FILES TO REVIEW"
+          "name": "FILES",
+          "icon": "$(files)"
         },
         {
           "id": "reviewmp.reviews",
-          "name": "REVIEWS"
+          "name": "REVIEWS",
+          "icon": "$(comment-discussion)"
         },
         {
           "id": "reviewmp.previousReviews",
-          "name": "PREVIOUS REVIEWS"
+          "name": "PREVIOUS REVIEWS",
+          "icon": "$(history)"
         }
       ]
     },
