@@ -8,7 +8,7 @@ import { CliRuntimeAdapter } from './providers/runtimeAdapter';
 import { globalRuntimeRegistry } from './providers/builtInRuntimes';
 import { RuntimeSettings } from './providers/runtimeRegistry';
 import { ReviewRequest } from './types/review';
-import { getSettings, registerSettingsCommands } from './settings';
+import { getSettings, logDebug, registerSettingsCommands, showDebugLogs } from './settings';
 import { ReviewTreeProvider, ReviewTreeViewId } from './reviewTreeProvider';
 import { getReviewSessionStore } from './store/reviewSessionStore';
 import { FixApplicator, createFixApplicator } from './harness/fixApplicator';
@@ -54,6 +54,7 @@ let store = getReviewSessionStore();
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('ReviewMP is now active');
+  logDebug('ReviewMP extension activated');
 
   const settings = getSettings();
   const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -61,7 +62,7 @@ export function activate(context: vscode.ExtensionContext) {
   const runtimeSettings: RuntimeSettings = {
     runtime: settings.runtime,
     model: settings.model,
-    debug: settings.debug,
+    debug: true,
     autoReviewOnStage: settings.autoReviewOnStage,
     autoReviewOnCommit: settings.autoReviewOnCommit,
     executableOverride: settings.executableOverride || undefined,
@@ -75,7 +76,7 @@ export function activate(context: vscode.ExtensionContext) {
       const currentRuntimeSettings: RuntimeSettings = {
         runtime: currentSettings.runtime,
         model: currentSettings.model,
-        debug: currentSettings.debug,
+        debug: true,
         autoReviewOnStage: currentSettings.autoReviewOnStage,
         autoReviewOnCommit: currentSettings.autoReviewOnCommit,
         executableOverride: currentSettings.executableOverride || undefined,
@@ -123,6 +124,7 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   registerSettingsCommands(context);
+  showDebugLogs(true);
 
   const reviewFileCommand = vscode.commands.registerCommand(
     'reviewmp.reviewFile',

@@ -6,10 +6,11 @@ export interface Settings {
   model: string;
   autoReviewOnStage: boolean;
   autoReviewOnCommit: boolean;
-  debug: boolean;
   executableOverride: string;
   extraArgs: string;
 }
+
+let outputChannel: vscode.OutputChannel | undefined;
 
 export function getSettings(): Settings {
   const config = vscode.workspace.getConfiguration('reviewmp');
@@ -18,7 +19,6 @@ export function getSettings(): Settings {
     model: config.get<string>('model', ''),
     autoReviewOnStage: config.get<boolean>('autoReviewOnStage', false),
     autoReviewOnCommit: config.get<boolean>('autoReviewOnCommit', false),
-    debug: config.get<boolean>('debug', false),
     executableOverride: config.get<string>('executableOverride', ''),
     extraArgs: config.get<string>('extraArgs', ''),
   };
@@ -29,31 +29,43 @@ export async function setRuntime(runtime: RuntimeId): Promise<void> {
   await config.update('runtime', runtime, vscode.ConfigurationTarget.Global);
 }
 
-export async function setDebug(enabled: boolean): Promise<void> {
-  const config = vscode.workspace.getConfiguration('reviewmp');
-  await config.update('debug', enabled, vscode.ConfigurationTarget.Global);
+function getOutputChannel(): vscode.OutputChannel {
+  if (!outputChannel) {
+    outputChannel = vscode.window.createOutputChannel('ReviewMP');
+  }
+  return outputChannel;
 }
 
-export async function toggleDebug(): Promise<boolean> {
-  const config = vscode.workspace.getConfiguration('reviewmp');
-  const current = config.get<boolean>('debug', false);
-  await config.update('debug', !current, vscode.ConfigurationTarget.Global);
-  return !current;
+export function showDebugLogs(preserveFocus = false): void {
+  getOutputChannel().show(preserveFocus);
 }
 
 export function logDebug(message: string, ...data: unknown[]): void {
   try {
-    const settings = getSettings();
-    if (settings.debug) {
-      const timestamp = new Date().toISOString();
-      console.log(`[ReviewMP DEBUG ${timestamp}]`, message, ...data);
-    }
+    const timestamp = new Date().toISOString();
+    const line = [`[ReviewMP DEBUG ${timestamp}]`, message, ...data.map((value) => formatLogValue(value))].join(' ');
+    console.log(line);
+    getOutputChannel().appendLine(line);
   } catch {
     // Safe to ignore - VS Code API not available in test environments
   }
 }
 
+function formatLogValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
 export async function registerSettingsCommands(context: vscode.ExtensionContext): Promise<void> {
+  context.subscriptions.push(getOutputChannel());
+
   context.subscriptions.push(
     vscode.commands.registerCommand('reviewmp.selectRuntime', async () => {
       const settings = getSettings();
@@ -79,9 +91,8 @@ export async function registerSettingsCommands(context: vscode.ExtensionContext)
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('reviewmp.toggleDebug', async () => {
-      const newValue = await toggleDebug();
-      vscode.window.showInformationMessage(`Debug mode ${newValue ? 'enabled' : 'disabled'}`);
+    vscode.commands.registerCommand('reviewmp.showDebugLogs', () => {
+      showDebugLogs();
     })
   );
 }

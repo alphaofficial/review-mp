@@ -77,8 +77,8 @@
         "title": "ReviewMP: Select Runtime"
       },
       {
-        "command": "reviewmp.toggleDebug",
-        "title": "ReviewMP: Toggle Debug Mode"
+        "command": "reviewmp.showDebugLogs",
+        "title": "ReviewMP: Show Debug Logs"
       },
       {
         "command": "reviewmp.reviewAllChanges",
@@ -239,11 +239,6 @@
           "type": "boolean",
           "default": false,
           "description": "Automatically run review before commit (requires pre-commit hook setup)"
-        },
-        "reviewmp.debug": {
-          "type": "boolean",
-          "default": false,
-          "description": "Enable debug logging for runtime requests and responses"
         },
         "reviewmp.executableOverride": {
           "type": "string",

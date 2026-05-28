@@ -428,14 +428,39 @@ describe('builtInRuntimes', () => {
     }
   });
 
-  it('opencode uses ndjson output format', () => {
+  it('opencode uses text output format', () => {
     const opencodeManifest = builtInRuntimes.find(m => m.id === 'opencode');
-    expect(opencodeManifest?.outputFormat).toBe('ndjson');
+    expect(opencodeManifest?.outputFormat).toBe('text');
   });
 
   it('gemini uses ndjson output format', () => {
     const geminiManifest = builtInRuntimes.find(m => m.id === 'gemini');
     expect(geminiManifest?.outputFormat).toBe('ndjson');
+  });
+
+  it('uses explicit one-shot invocation args for interactive-by-default CLIs', () => {
+    const claudeManifest = builtInRuntimes.find(m => m.id === 'claude');
+    const codexManifest = builtInRuntimes.find(m => m.id === 'codex');
+    const opencodeManifest = builtInRuntimes.find(m => m.id === 'opencode');
+
+    expect(claudeManifest?.promptTransport).toBe('stdin');
+    expect(claudeManifest?.prePromptArgs).toEqual(['-p']);
+    expect(codexManifest?.promptTransport).toBe('stdin');
+    expect(codexManifest?.prePromptArgs).toEqual(['exec', '--skip-git-repo-check']);
+    expect(opencodeManifest?.prePromptArgs).toEqual(['run', '--pure', '--dangerously-skip-permissions']);
+    expect(opencodeManifest?.workingDirectoryArgFlag).toBe('--dir');
+  });
+
+  it('uses explicit prompt flags for all argv-based runtimes', () => {
+    const copilotManifest = builtInRuntimes.find(m => m.id === 'copilot');
+    const geminiManifest = builtInRuntimes.find(m => m.id === 'gemini');
+    const hermesManifest = builtInRuntimes.find(m => m.id === 'hermes');
+    const piManifest = builtInRuntimes.find(m => m.id === 'pi');
+
+    expect(copilotManifest?.prePromptArgs).toEqual(['-p']);
+    expect(geminiManifest?.prePromptArgs).toEqual(['-p']);
+    expect(hermesManifest?.prePromptArgs).toEqual(['chat', '-q']);
+    expect(piManifest?.prePromptArgs).toEqual(['-p']);
   });
 });
 

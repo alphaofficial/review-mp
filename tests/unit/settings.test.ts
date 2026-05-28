@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getSettings, setRuntime, setDebug, toggleDebug, logDebug, Settings } from '../../src/settings';
-import { RuntimeId, DEFAULT_RUNTIME_ID } from '../../src/providers/runtimeRegistry';
+import { describe, it, expect, vi } from 'vitest';
+import { getSettings, setRuntime, logDebug, showDebugLogs, Settings } from '../../src/settings';
+import { DEFAULT_RUNTIME_ID } from '../../src/providers/runtimeRegistry';
 
 vi.mock('vscode', () => ({
   workspace: {
@@ -14,6 +14,16 @@ vi.mock('vscode', () => ({
     Workspace: 2,
     WorkspaceFolder: 3,
   },
+  window: {
+    createOutputChannel: vi.fn(() => ({
+      appendLine: vi.fn(),
+      show: vi.fn(),
+      dispose: vi.fn(),
+    })),
+  },
+  commands: {
+    registerCommand: vi.fn(),
+  },
 }));
 
 describe('Settings interface', () => {
@@ -24,7 +34,6 @@ describe('Settings interface', () => {
         model: '',
         autoReviewOnStage: false,
         autoReviewOnCommit: false,
-        debug: false,
         executableOverride: '',
         extraArgs: '',
       };
@@ -37,7 +46,6 @@ describe('Settings interface', () => {
         model: '',
         autoReviewOnStage: false,
         autoReviewOnCommit: false,
-        debug: false,
         executableOverride: '/usr/local/bin/claude',
         extraArgs: '',
       };
@@ -50,7 +58,6 @@ describe('Settings interface', () => {
         model: '',
         autoReviewOnStage: false,
         autoReviewOnCommit: false,
-        debug: false,
         executableOverride: '',
         extraArgs: '--verbose --debug',
       };
@@ -65,7 +72,6 @@ describe('Settings interface', () => {
         model: 'claude-3-5-sonnet',
         autoReviewOnStage: false,
         autoReviewOnCommit: false,
-        debug: false,
         executableOverride: '',
         extraArgs: '',
       };
@@ -78,7 +84,6 @@ describe('Settings interface', () => {
         model: '',
         autoReviewOnStage: true,
         autoReviewOnCommit: false,
-        debug: false,
         executableOverride: '',
         extraArgs: '',
       };
@@ -91,24 +96,10 @@ describe('Settings interface', () => {
         model: '',
         autoReviewOnStage: false,
         autoReviewOnCommit: true,
-        debug: false,
         executableOverride: '',
         extraArgs: '',
       };
       expect(settings.autoReviewOnCommit).toBe(true);
-    });
-
-    it('has debug as boolean', () => {
-      const settings: Settings = {
-        runtime: 'opencode',
-        model: '',
-        autoReviewOnStage: false,
-        autoReviewOnCommit: false,
-        debug: true,
-        executableOverride: '',
-        extraArgs: '',
-      };
-      expect(settings.debug).toBe(true);
     });
   });
 });
@@ -132,11 +123,6 @@ describe('getSettings', () => {
   it('returns settings with autoReviewOnCommit false by default', () => {
     const settings = getSettings();
     expect(settings.autoReviewOnCommit).toBe(false);
-  });
-
-  it('returns settings with debug false by default', () => {
-    const settings = getSettings();
-    expect(settings.debug).toBe(false);
   });
 
   it('returns settings with empty executableOverride by default', () => {
@@ -166,28 +152,6 @@ describe('setRuntime', () => {
   });
 });
 
-describe('setDebug', () => {
-  it('is a function', () => {
-    expect(typeof setDebug).toBe('function');
-  });
-
-  it('accepts boolean parameter', async () => {
-    await expect(setDebug(true)).resolves.toBeUndefined();
-    await expect(setDebug(false)).resolves.toBeUndefined();
-  });
-});
-
-describe('toggleDebug', () => {
-  it('is a function', () => {
-    expect(typeof toggleDebug).toBe('function');
-  });
-
-  it('returns a boolean', async () => {
-    const result = await toggleDebug();
-    expect(typeof result).toBe('boolean');
-  });
-});
-
 describe('logDebug', () => {
   it('does not throw when called', () => {
     expect(() => logDebug('test message')).not.toThrow();
@@ -195,5 +159,11 @@ describe('logDebug', () => {
 
   it('does not throw with multiple arguments', () => {
     expect(() => logDebug('test', { key: 'value' }, [1, 2, 3])).not.toThrow();
+  });
+});
+
+describe('showDebugLogs', () => {
+  it('does not throw when called', () => {
+    expect(() => showDebugLogs()).not.toThrow();
   });
 });

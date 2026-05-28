@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import { FindingAction, ReviewFile, ReviewFinding, ReviewHistoryEntry, ReviewSession, ReviewStatus, ReviewType, Severity } from '../types/review';
+import { logDebug } from '../settings';
 
 let findingIdCounter = 0;
 const MAX_SESSION_HISTORY = 5;
@@ -101,6 +102,11 @@ export class ReviewSessionStore extends EventEmitter {
     }
 
     this.activeSession.status = status;
+    logDebug('Review session status changed', {
+      sessionId: this.activeSession.id,
+      reviewType: this.activeSession.reviewType,
+      status,
+    });
     this.emit('status-changed', { sessionId: this.activeSession.id, status });
 
     if (status === 'completed' || status === 'failed') {
@@ -115,6 +121,11 @@ export class ReviewSessionStore extends EventEmitter {
 
     this.activeSession.error = error;
     this.activeSession.status = 'failed';
+    logDebug('Review session failed', {
+      sessionId: this.activeSession.id,
+      reviewType: this.activeSession.reviewType,
+      error,
+    });
     this.emit('status-changed', { sessionId: this.activeSession.id, status: 'failed' });
     this.finalizeSession();
   }

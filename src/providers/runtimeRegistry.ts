@@ -20,6 +20,7 @@ export interface RuntimeManifest {
   supportsExtraArgs?: boolean;
   prePromptArgs?: string[];
   modelArgFlag?: string;
+  workingDirectoryArgFlag?: string;
 }
 
 export interface NormalizedReviewResult {
