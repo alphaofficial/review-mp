@@ -1,6 +1,6 @@
 # ReviewMP — Architecture
 
-A VS Code extension that reviews code using [OpenCode](https://github.com/nichochar/opencode) as the LLM backend. It supports single-file review, diff-based review (staged/uncommitted/branch), and full PR review with a 2-pass clustered strategy.
+A VS Code extension that reviews code using runtime adapters to support multiple AI backends. It supports single-file review, diff-based review (staged/uncommitted/branch), and full PR review with a 2-pass clustered strategy.
 
 ---
 
@@ -11,22 +11,60 @@ A VS Code extension that reviews code using [OpenCode](https://github.com/nichoc
 The VS Code extension activation point. Registers all commands and wires services together.
 
 **Key responsibilities:**
-- Creates `OpenCodeService`, and `ReviewCommentController`
+- Creates `ReviewOrchestrator`, `ReviewCommentController`, and runtime registry
 - Optionally creates a `GitWatcher` if auto-review settings are enabled
-- Registers 8 commands: `reviewFile`, `reviewSelection`, `reviewStaged`, `reviewUncommitted`, `reviewLastCommit`, `reviewBranch`, `reviewPR`, `clearComments`
+- Registers 9 commands: `reviewFile`, `reviewSelection`, `reviewStaged`, `reviewUncommitted`, `reviewLastCommit`, `reviewBranch`, `reviewPR`, `clearComments`, `selectRuntime`
 - Contains helper functions (`reviewDocument`, `reviewCode`, `reviewGitChanges`, `addDiffComments`, `placePRComments`) that orchestrate between services and the comment controller
 - `placePRComments` checks if files exist locally; missing files get dumped to an Output channel instead of inline comments
 
-### `src/opencode.ts` — OpenCode LLM Interface (File & Diff Reviews)
+### `src/reviewOrchestrator.ts` — Review Coordination
 
-Handles spawning the `opencode` CLI and parsing its JSON output for single-file and diff reviews.
+Coordinates the review workflow across the harness and runtime adapter.
 
 **Key responsibilities:**
-- `reviewCode(code, languageId, filePath, token)` — Reviews a code snippet. Adds line numbers to the code, builds a prompt, spawns `opencode run --agent reviewmp --format json`, parses NDJSON output
-- `reviewDiff(type, token)` — Reviews git diffs (staged/uncommitted/lastCommit/branch). Runs the appropriate `git diff` command, formats the diff with line numbers (only added lines get numbers), sends to OpenCode
-- `applyFix(filePath, line, fix)` — Applies a suggested fix by sending a prompt to OpenCode (without `--agent reviewmp`)
-- `detectBaseBranch(token)` — Tries main → origin/main → master → origin/master → symbolic-ref → user prompt
-- Output parsing: Reads NDJSON stream, collects `type: "text"` events, extracts JSON array via regex, validates with `validateComments`/`validateDiffComments`
+- Creates and manages `ReviewHarness` instance
+- Selects runtime adapter based on `reviewmp.runtime` setting
+- Handles cancellation and progress reporting
+- Routes review requests to the appropriate harness method
+
+### `src/harness/reviewHarness.ts` — Core Review Loop
+
+The runtime-agnostic review orchestration engine.
+
+**Key responsibilities:**
+- Bounded review loop with retry handling
+- Prompt construction for all review types
+- Diff formatting and chunking
+- Output parsing and validation
+- Comment deduplication
+
+### `src/providers/registry.ts` — Runtime Registry
+
+Built-in registry of supported runtime manifests.
+
+**Key responsibilities:**
+- Provides `RuntimeManifest` for each supported runtime
+- Runtime lookup by ID
+- Manifest validation
+
+### `src/providers/runtimeAdapter.ts` — CLI Runtime Adapter
+
+Shared adapter for invoking CLI-based runtimes.
+
+**Key responsibilities:**
+- Spawns runtime process with configured prompt
+- Handles `argv` or `stdin` prompt transport based on manifest
+- Handles cancellation via process termination
+- Returns raw output for normalization
+
+### `src/harness/outputParser.ts` — Output Parsing
+
+Parses runtime output into normalized review results.
+
+**Key responsibilities:**
+- Handles `text`, `json`, and `ndjson` output formats
+- Extracts comments from various runtime output shapes
+- Drops invalid findings with debug logging
 
 ### `src/comments.ts` — VS Code Comment Controller
 
@@ -35,10 +73,17 @@ Manages the VS Code native comment UI (inline review comments with accept/reject
 **Key responsibilities:**
 - `ReviewCommentController` — Creates a `vscode.CommentController`, manages comment threads per file
 - `addComments(uri, comments, languageId)` — Clears existing comments for the file, creates threads with markdown bodies (including code blocks for fixes)
-- `acceptFix(comment)` — Delegates to `OpenCodeService.applyFix()`, disposes thread on success
-- `rejectComment(comment)` — Simply disposes the thread
 - Uses `WeakMap<vscode.Comment, CommentData>` to associate VS Code comment objects with fix data
 - Severity labels: Error, Warning, Info, Suggestion, Review
+
+### `src/harness/toolExecutor.ts` — Read-Only Tool Execution
+
+Executes tools for context gathering with safety constraints.
+
+**Key responsibilities:**
+- Read-only file reading
+- Git diff generation
+- No shell execution or file mutation
 
 ### `src/gitWatcher.ts` — Auto-Review on Stage/Commit
 
@@ -59,22 +104,25 @@ Watches the VS Code Git extension API for staging and commit events to trigger a
 ```
 User triggers command
   → extension.ts: reviewCode()
-    → opencode.ts: reviewCode(code, lang, path)
-      → spawns: opencode run --agent reviewmp --format json "<prompt>"
-      → parses NDJSON → extracts JSON array → validates
-    → comments.ts: addComments(uri, comments)
-      → creates vscode.CommentThread per comment
+    → reviewOrchestrator.ts: review()
+      → reviewHarness.ts: runReview()
+        → runtimeAdapter.ts: review()
+          → spawns runtime CLI with prompt
+          → parses output
+        → validates comments
+      → comments.ts: addComments(uri, comments)
+        → creates vscode.CommentThread per comment
 ```
 
 ### Diff Review (staged/uncommitted/branch/lastCommit)
 ```
 User triggers command
   → extension.ts: reviewGitChanges(type)
-    → opencode.ts: reviewDiff(type)
-      → runs git diff (appropriate variant)
-      → formats diff with line numbers
-      → spawns opencode with formatted diff prompt
-      → parses → validates (requires file field)
+    → reviewOrchestrator.ts: review()
+      → reviewHarness.ts: runDiffReview()
+        → toolExecutor.ts: collectDiff()
+        → runtimeAdapter.ts: review()
+        → validates comments (requires file field)
     → extension.ts: addDiffComments()
       → groups by file → comments.ts: addComments() per file
 ```
@@ -83,8 +131,9 @@ User triggers command
 ```
 User clicks "Accept Fix" on a comment
   → comments.ts: acceptFix()
-    → opencode.ts: applyFix(filePath, line, fix)
-      → spawns: opencode run "<apply fix prompt>"
+    → reviewOrchestrator.ts: applyFix()
+      → runtimeAdapter.ts: applyFix()
+        → spawns runtime with fix prompt
     → disposes comment thread
 ```
 
@@ -115,25 +164,41 @@ This 2-pass design balances thoroughness with token efficiency — detailed revi
 ---
 
 External dependencies:
-  • opencode CLI  — LLM inference (spawned as child process)
-  • git CLI       — diff generation, branch detection
-  • gh CLI        — PR metadata lookup (optional, graceful fallback)
-  • vscode.git    — built-in Git extension API (for GitWatcher)
-```
+  • Claude CLI        — LLM inference (spawned as child process)
+  • Copilot CLI       — LLM inference (alternative backend)
+  • Codex CLI         — LLM inference (alternative backend)
+  • Gemini CLI        — LLM inference (alternative backend)
+  • Hermes CLI        — LLM inference (alternative backend)
+  • Pi CLI            — LLM inference (alternative backend)
+  • OpenCode CLI      — LLM inference (backward-compatible default)
+  • git CLI           — diff generation, branch detection
+  • gh CLI            — PR metadata lookup (optional, graceful fallback)
+  • vscode.git        — built-in Git extension API (for GitWatcher)
 
+```
 ### Import Graph (TypeScript)
 
 ```
 extension.ts
-  ├── imports comments.ts    (ReviewCommentController, ReviewComment)
-  ├── imports opencode.ts    (OpenCodeService)
-  └── imports gitWatcher.ts  (GitWatcher)
+  ├── imports reviewOrchestrator.ts  (ReviewOrchestrator)
+  ├── imports comments.ts            (ReviewCommentController)
+  └── imports gitWatcher.ts          (GitWatcher)
 
-opencode.ts
-  └── imports comments.ts    (ReviewComment type)
+reviewOrchestrator.ts
+  ├── imports reviewHarness.ts       (ReviewHarness)
+  ├── imports runtimeAdapter.ts      (RuntimeAdapter)
+  └── imports comments.ts            (ReviewCommentController)
+
+reviewHarness.ts
+  ├── imports toolExecutor.ts        (ToolExecutor)
+  ├── imports outputParser.ts        (OutputParser)
+  └── imports commentValidator.ts    (CommentValidator)
+
+runtimeAdapter.ts
+  └── imports registry.ts            (RuntimeRegistry)
 
 comments.ts
-  └── imports opencode.ts    (OpenCodeService — for applyFix)
+  └── imports reviewOrchestrator.ts (for applyFix)
 
 gitWatcher.ts
   └── (no local imports — uses vscode.git extension API)
@@ -149,6 +214,19 @@ ReviewComment {           // Defined in comments.ts, used everywhere
   fix?: string
   severity?: 'error' | 'warning' | 'info' | 'suggestion'
 }
+
+RuntimeManifest {         // Defined in providers/registry.ts
+  id: RuntimeId
+  displayName: string
+  executable: string
+  promptTransport: 'argv' | 'stdin'
+  outputFormat: 'text' | 'json' | 'ndjson'
+  capabilities: {
+    supportsModelOverride: boolean
+    supportsStreaming: boolean
+    supportsToolCalling: boolean
+  }
+}
 ```
 
 ---
@@ -159,7 +237,10 @@ All settings under `reviewmp.*`:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `opencodePath` | `opencode` | Path to the opencode binary |
-| `model` | (empty) | LLM model override |
-| `autoReviewOnStage` | `false` | Auto-review when files are staged |
-| `autoReviewOnCommit` | `false` | Auto-review on commit |
+| `reviewmp.runtime` | `opencode` | Runtime ID: `claude`, `copilot`, `codex`, `gemini`, `hermes`, `pi`, `opencode` |
+| `reviewmp.model` | (empty) | Model override (runtime-specific) |
+| `reviewmp.autoReviewOnStage` | `false` | Auto-review when files are staged |
+| `reviewmp.autoReviewOnCommit` | `false` | Auto-review on commit |
+| `reviewmp.debug` | `false` | Enable debug logging |
+| `reviewmp.<runtime>Executable` | (runtime default) | Override runtime executable path |
+| `reviewmp.<runtime>ExtraArgs` | (none) | Additional arguments for runtime |

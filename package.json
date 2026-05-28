@@ -61,6 +61,14 @@
         "command": "reviewmp.rejectComment",
         "title": "Reject",
         "icon": "$(x)"
+      },
+      {
+        "command": "reviewmp.selectRuntime",
+        "title": "ReviewMP: Select Runtime"
+      },
+      {
+        "command": "reviewmp.toggleDebug",
+        "title": "ReviewMP: Toggle Debug Mode"
       }
     ],
     "menus": {
@@ -99,15 +107,16 @@
     "configuration": {
       "title": "ReviewMP",
       "properties": {
-        "reviewmp.opencodePath": {
+        "reviewmp.runtime": {
           "type": "string",
           "default": "opencode",
-          "description": "Path to the OpenCode CLI executable"
+          "enum": ["claude", "copilot", "codex", "gemini", "hermes", "pi", "opencode"],
+          "description": "Runtime to use for code reviews"
         },
         "reviewmp.model": {
           "type": "string",
           "default": "",
-          "description": "Model to use for reviews in provider/model format (e.g., github-copilot/gpt-4o, github-copilot/claude-sonnet-4, anthropic/claude-sonnet-4-20250514). Leave empty for default."
+          "description": "Model to use for reviews. Leave empty for runtime default. Format varies by runtime."
         },
         "reviewmp.autoReviewOnStage": {
           "type": "boolean",
@@ -118,6 +127,21 @@
           "type": "boolean",
           "default": false,
           "description": "Automatically run review before commit (requires pre-commit hook setup)"
+        },
+        "reviewmp.debug": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable debug logging for runtime requests and responses"
+        },
+        "reviewmp.executableOverride": {
+          "type": "string",
+          "default": "",
+          "description": "Override the default executable path for the selected runtime"
+        },
+        "reviewmp.extraArgs": {
+          "type": "string",
+          "default": "",
+          "description": "Additional arguments to pass to the runtime executable"
         }
       }
     }
@@ -126,14 +150,18 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "lint": "eslint src --ext ts"
+    "lint": "eslint src --ext ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^6.13.0",
     "@typescript-eslint/parser": "^6.13.0",
+    "@vscode/test-electron": "^2.5.2",
     "eslint": "^8.54.0",
-    "typescript": "^5.3.0"
+    "typescript": "^5.3.0",
+    "vitest": "^4.1.7"
   }
 }
