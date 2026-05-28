@@ -259,9 +259,11 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
     const duration = this.formatDuration(entry.duration);
     const typeIcon = this.getReviewTypeIcon(entry.reviewType);
 
+    const label = `${entry.title} (${entry.findingsCount} findings) - ${date} - ${duration}`;
+
     return {
       id: `history-${entry.sessionId}`,
-      label: `${entry.title}`,
+      label,
       icon: typeIcon,
       collapsibleState: vscode.TreeItemCollapsibleState.None,
       historyEntry: entry,

@@ -403,6 +403,22 @@ describe('ReviewSessionStore', () => {
     it('should do nothing when no active session', () => {
       expect(() => store.clearActiveSession()).not.toThrow();
     });
+
+    it('should not affect session history when clearing active session', () => {
+      store.createSession('staged', 'Historical Review');
+      store.addFinding('/test/file.ts', 1, 'Error', 'error');
+      store.updateSessionStatus('completed');
+
+      expect(store.getSessionHistory()).toHaveLength(1);
+      expect(store.getSessionHistory()[0].title).toBe('Historical Review');
+
+      store.createSession('file', 'Active Review');
+      store.clearActiveSession();
+
+      const history = store.getSessionHistory();
+      expect(history).toHaveLength(1);
+      expect(history[0].title).toBe('Historical Review');
+    });
   });
 
   describe('getSessionHistory', () => {

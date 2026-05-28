@@ -323,8 +323,8 @@ describe('ReviewTreeProvider', () => {
 
       const items = previousReviewsProvider.getChildren() as TreeElement[];
       expect(items).toHaveLength(2);
-      expect(items[0].label).toBe('Review 2');
-      expect(items[1].label).toBe('Review 1');
+      expect(items[0].label).toContain('Review 2');
+      expect(items[1].label).toContain('Review 1');
     });
 
     it('should have open review panel command on history entries', () => {
@@ -353,6 +353,34 @@ describe('ReviewTreeProvider', () => {
 
       const items = previousReviewsProvider.getChildren() as TreeElement[];
       expect(items.length).toBeLessThanOrEqual(10);
+    });
+
+    it('should display findings count in history label', () => {
+      store.createSession('staged', 'Multi-finding Review');
+      store.addFinding('/src/test1.ts', 1, 'Error 1', 'error');
+      store.addFinding('/src/test2.ts', 5, 'Error 2', 'warning');
+      store.addFinding('/src/test3.ts', 10, 'Error 3', 'info');
+      store.updateSessionStatus('completed');
+
+      const items = previousReviewsProvider.getChildren() as TreeElement[];
+      expect(items[0].label).toContain('3 findings');
+    });
+
+    it('should display date in history label', () => {
+      store.createSession('file', 'Dated Review');
+      store.updateSessionStatus('completed');
+
+      const items = previousReviewsProvider.getChildren() as TreeElement[];
+      const today = new Date().toLocaleDateString();
+      expect(items[0].label).toContain(today);
+    });
+
+    it('should display duration in history label', () => {
+      store.createSession('file', 'Timed Review');
+      store.updateSessionStatus('completed');
+
+      const items = previousReviewsProvider.getChildren() as TreeElement[];
+      expect(items[0].label).toContain('ms');
     });
   });
 
