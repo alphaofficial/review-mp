@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { ReviewSessionStore, getReviewSessionStore } from './store/reviewSessionStore';
-import { ReviewFinding, ReviewFile, ReviewHistoryEntry, ReviewSession, Severity } from '../types/review';
+import { ReviewFinding, ReviewFile, ReviewHistoryEntry, ReviewSession, Severity } from './types/review';
 
 export interface TreeElement {
   id: string;

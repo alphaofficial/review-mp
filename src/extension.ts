@@ -9,6 +9,9 @@ import { globalRuntimeRegistry } from './providers/builtInRuntimes';
 import { RuntimeSettings } from './providers/runtimeRegistry';
 import { ReviewRequest } from './types/review';
 import { getSettings, registerSettingsCommands } from './settings';
+import { ReviewTreeProvider, ReviewTreeViewId } from './reviewTreeProvider';
+import { getReviewSessionStore } from './store/reviewSessionStore';
+import { FixApplicator, createFixApplicator } from './harness/fixApplicator';
 
 class RuntimeProviderAdapter implements ModelProvider {
   readonly name: string;
@@ -44,6 +47,8 @@ class RuntimeProviderAdapter implements ModelProvider {
 let commentController: ReviewCommentController;
 let orchestrator: ReviewOrchestrator;
 let gitWatcher: GitWatcher | undefined;
+let treeProviders: ReviewTreeProvider[] = [];
+let store = getReviewSessionStore();
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('ReviewMP is now active');
@@ -76,8 +81,25 @@ export function activate(context: vscode.ExtensionContext) {
       };
       return new RuntimeProviderAdapter(currentSettings.runtime, currentRuntimeSettings, workspaceRoot);
     },
-    commentController
+    commentController,
+    store
   );
+
+  const viewIds: ReviewTreeViewId[] = [
+    'reviewmp.newReview',
+    'reviewmp.filesToReview',
+    'reviewmp.reviews',
+    'reviewmp.previousReviews'
+  ];
+
+  for (const viewId of viewIds) {
+    const treeProvider = new ReviewTreeProvider(viewId, store);
+    treeProviders.push(treeProvider);
+    context.subscriptions.push(
+      vscode.window.registerTreeDataProvider(viewId, treeProvider),
+      treeProvider
+    );
+  }
 
   if (gitWatcher) {
     gitWatcher.dispose();
@@ -178,6 +200,114 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  const reviewAllChangesCommand = vscode.commands.registerCommand(
+    'reviewmp.reviewAllChanges',
+    async () => {
+      await orchestrator.reviewBranch();
+    }
+  );
+
+  const openFindingCommand = vscode.commands.registerCommand(
+    'reviewmp.openFinding',
+    async (findingId: string) => {
+      const session = store.getActiveSession();
+      if (!session) {
+        vscode.window.showWarningMessage('No active review');
+        return;
+      }
+
+      let finding = null;
+      for (const file of session.files.values()) {
+        const found = file.findings.find(f => f.id === findingId);
+        if (found) {
+          finding = found;
+          const uri = vscode.Uri.file(file.path);
+          const document = await vscode.workspace.openTextDocument(uri);
+          await vscode.window.showTextDocument(document, { preserveFocus: false });
+          const editor = vscode.window.activeTextEditor;
+          if (editor) {
+            const line = Math.max(0, finding.line - 1);
+            const range = new vscode.Range(line, 0, line, 0);
+            editor.selection = new vscode.Selection(range.start, range.end);
+            editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+          }
+          break;
+        }
+      }
+
+      if (!finding) {
+        vscode.window.showWarningMessage('Finding not found');
+      }
+    }
+  );
+
+  const fixApplicator: FixApplicator = createFixApplicator();
+
+  const applyFindingFixCommand = vscode.commands.registerCommand(
+    'reviewmp.applyFindingFix',
+    async (findingId: string) => {
+      const session = store.getActiveSession();
+      if (!session) {
+        vscode.window.showWarningMessage('No active review');
+        return;
+      }
+
+      let finding = null;
+      let filePath: string | undefined;
+      for (const file of session.files.values()) {
+        const found = file.findings.find(f => f.id === findingId);
+        if (found) {
+          finding = found;
+          filePath = file.path;
+          break;
+        }
+      }
+
+      if (!finding || !finding.fix) {
+        vscode.window.showWarningMessage('Finding or fix not available');
+        return;
+      }
+
+      if (!filePath) {
+        vscode.window.showWarningMessage('File path not found');
+        return;
+      }
+
+      try {
+        const result = await fixApplicator.applyFix(filePath, finding.line, finding.fix);
+        if (result.success) {
+          store.updateFindingStatus(findingId, 'apply');
+          vscode.window.showInformationMessage('Fix applied successfully');
+        } else {
+          vscode.window.showErrorMessage(`Failed to apply fix: ${result.error}`);
+        }
+      } catch (error) {
+        vscode.window.showErrorMessage(`Failed to apply fix: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  );
+
+  const dismissFindingCommand = vscode.commands.registerCommand(
+    'reviewmp.dismissFinding',
+    async (findingId: string) => {
+      store.updateFindingStatus(findingId, 'dismiss');
+    }
+  );
+
+  const clearActiveReviewCommand = vscode.commands.registerCommand(
+    'reviewmp.clearActiveReview',
+    async () => {
+      orchestrator.clearActiveReview();
+    }
+  );
+
+  const openReviewPanelCommand = vscode.commands.registerCommand(
+    'reviewmp.openReviewPanel',
+    async (sessionId?: string) => {
+      await vscode.commands.executeCommand('reviewmp.reviews.focus');
+    }
+  );
+
   context.subscriptions.push(
     reviewFileCommand,
     reviewSelectionCommand,
@@ -187,7 +317,15 @@ export function activate(context: vscode.ExtensionContext) {
     reviewBranchCommand,
     reviewPRCommand,
     clearCommentsCommand,
-    commentController
+    reviewAllChangesCommand,
+    openFindingCommand,
+    applyFindingFixCommand,
+    dismissFindingCommand,
+    clearActiveReviewCommand,
+    openReviewPanelCommand,
+    commentController,
+    orchestrator,
+    store
   );
 }
 
@@ -195,7 +333,17 @@ export function deactivate() {
   if (commentController) {
     commentController.dispose();
   }
+  if (orchestrator) {
+    orchestrator.dispose();
+  }
   if (gitWatcher) {
     gitWatcher.dispose();
+  }
+  for (const provider of treeProviders) {
+    provider.dispose();
+  }
+  treeProviders = [];
+  if (store) {
+    store.dispose();
   }
 }
