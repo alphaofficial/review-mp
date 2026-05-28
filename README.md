@@ -1,6 +1,6 @@
 # ReviewMP
 
-Provider-neutral AI code review for VS Code with inline comments.
+A runtime-agnostic AI code review harness for VS Code with inline comments.
 
 ## Features
 
@@ -8,27 +8,34 @@ Provider-neutral AI code review for VS Code with inline comments.
 - Review file, selection, staged changes, uncommitted changes, last commit, or branch
 - Accept or reject suggested fixes
 - Auto-review on stage or before commit (optional)
-- **Multi-provider support**: OpenCode, Custom CLI, OpenAI-compatible HTTP
+- **Multi-runtime support**: Claude, Copilot, Codex, Gemini, Hermes, Pi, OpenCode
 - Read-only tool execution for safe context gathering
 - Comment validation before placement
 - Bounded review iterations with retry handling
 
-## Supported Providers
+## Supported Runtimes
 
-| Provider | Description |
-|----------|-------------|
-| `opencode` | Use OpenCode CLI (default, backward compatible) |
-| `custom-cli` | Use a custom CLI command for reviews |
-| `openai-compatible` | Use any OpenAI-compatible HTTP API |
+| Runtime | Description |
+|---------|-------------|
+| `claude` | Use Anthropic's Claude Code CLI |
+| `copilot` | Use GitHub Copilot CLI |
+| `codex` | Use OpenAI Codex CLI |
+| `gemini` | Use Google Gemini CLI |
+| `hermes` | Use Hermes CLI |
+| `pi` | Use Pi CLI |
+| `opencode` | Use OpenCode CLI (default for backward compatibility) |
 
 ## Prerequisites
 
 1. **Node.js** 18+ for building the extension
 
-2. **Provider setup** (choose one):
+2. **Runtime setup** (choose one):
+   - **Claude**: `npm install -g @anthropic/claude-code` and authenticate
+   - **Copilot**: `npm install -g @githubnext/copilot-cli` and authenticate
+   - **Codex**: Install OpenAI Codex CLI and authenticate
+   - **Gemini**: Install Google Gemini CLI and authenticate
+   - **Hermes/Pi**: Install respective CLI and authenticate
    - **OpenCode**: `npm install -g opencode-ai` and `opencode auth login`
-   - **OpenAI-compatible**: API key for your provider
-   - **Custom CLI**: Any CLI that accepts prompts and returns JSON
 
 ## Setup
 
@@ -87,18 +94,12 @@ If the automated script doesn't work, you can run these steps manually:
    - Open Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
    - Run "Developer: Reload Window"
 
-### 3. Configure Provider
+### 3. Configure Runtime
 
-Open Command Palette and select a provider:
-
-```
-ReviewMP: Select Provider
-```
-
-Then set your API key:
+Open Command Palette and select a runtime:
 
 ```
-ReviewMP: Set API Key
+ReviewMP: Select Runtime
 ```
 
 ## Usage
@@ -121,9 +122,7 @@ ReviewMP: Set API Key
 | `ReviewMP: Review Branch Changes` | Review all commits on current branch vs base |
 | `ReviewMP: Review Pull Request` | Review PR with clustered passes |
 | `ReviewMP: Clear All Comments` | Remove all review comments |
-| `ReviewMP: Select Provider` | Choose AI provider |
-| `ReviewMP: Set API Key` | Set provider API key |
-| `ReviewMP: Clear API Key` | Clear stored API key |
+| `ReviewMP: Select Runtime` | Choose AI runtime |
 | `ReviewMP: Toggle Debug Mode` | Enable/disable debug logging |
 
 ## Configuration
@@ -137,12 +136,11 @@ Settings can be configured via:
 Example `settings.json`:
 ```json
 {
-  "reviewmp.provider": "openai-compatible",
-  "reviewmp.model": "gpt-4o",
+  "reviewmp.runtime": "claude",
+  "reviewmp.model": "claude-sonnet-4-20250514",
   "reviewmp.autoReviewOnStage": true,
   "reviewmp.autoReviewOnCommit": false,
-  "reviewmp.debug": false,
-  "reviewmp.openaiCompatibleEndpoint": ""
+  "reviewmp.debug": false
 }
 ```
 
@@ -150,42 +148,52 @@ Example `settings.json`:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `reviewmp.provider` | `opencode` | Provider: `opencode`, `custom-cli`, `openai-compatible` |
-| `reviewmp.opencodePath` | `opencode` | Path to OpenCode CLI (when using opencode provider) |
-| `reviewmp.model` | (empty) | Model in `provider/model` format. Leave empty for default. |
+| `reviewmp.runtime` | `opencode` | Runtime: `claude`, `copilot`, `codex`, `gemini`, `hermes`, `pi`, `opencode` |
+| `reviewmp.model` | (empty) | Model override. Leave empty for runtime default. |
 | `reviewmp.autoReviewOnStage` | `false` | Automatically review when files are staged |
 | `reviewmp.autoReviewOnCommit` | `false` | Prompt to review before commit |
 | `reviewmp.debug` | `false` | Enable debug logging |
-| `reviewmp.customCliCommand` | (empty) | CLI command for custom-cli provider |
-| `reviewmp.customCliArgs` | (empty) | Additional arguments for custom CLI |
-| `reviewmp.openaiCompatibleEndpoint` | (empty) | Endpoint URL for openai-compatible provider |
 
-### Provider Configuration
+### Runtime-Specific Settings
 
-**OpenCode** (default):
+Each runtime may support additional optional settings:
+
 ```json
 {
-  "reviewmp.provider": "opencode",
-  "reviewmp.opencodePath": "opencode",
-  "reviewmp.model": "github-copilot/gpt-4o"
+  "reviewmp.runtime": "claude",
+  "reviewmp.model": "claude-sonnet-4-20250514",
+  "reviewmp.claudeExecutable": "/usr/local/bin/claude",
+  "reviewmp.claudeExtraArgs": "--no-input"
 }
 ```
 
-**OpenAI-compatible**:
+| Setting | Description |
+|---------|-------------|
+| `reviewmp.<runtime>Executable` | Override the runtime executable path |
+| `reviewmp.<runtime>ExtraArgs` | Additional arguments passed to the runtime |
+
+### Runtime Configuration Examples
+
+**Claude** (default):
 ```json
 {
-  "reviewmp.provider": "openai-compatible",
-  "reviewmp.openaiCompatibleEndpoint": "https://api.openai.com/v1"
+  "reviewmp.runtime": "claude",
+  "reviewmp.model": "claude-sonnet-4-20250514"
 }
 ```
-Then run `ReviewMP: Set API Key` to enter your API key.
 
-**Custom CLI**:
+**OpenCode**:
 ```json
 {
-  "reviewmp.provider": "custom-cli",
-  "reviewmp.customCliCommand": "/usr/local/bin/review-ai",
-  "reviewmp.customCliArgs": "--model gpt-4"
+  "reviewmp.runtime": "opencode"
+}
+```
+
+**Copilot**:
+```json
+{
+  "reviewmp.runtime": "copilot",
+  "reviewmp.model": "gpt-4o"
 }
 ```
 
@@ -202,10 +210,10 @@ Both are disabled by default. The extension only activates on startup if one of 
 
 ## Architecture
 
-ReviewMP uses a provider-neutral architecture:
+ReviewMP uses a runtime-agnostic architecture:
 
 ```
-ReviewMP Command → ReviewOrchestrator → ReviewHarness → Provider → Model
+ReviewMP Command → ReviewOrchestrator → ReviewHarness → RuntimeAdapter → Runtime
                                               ↓
                                       ToolExecutor (read-only)
                                               ↓
@@ -214,17 +222,19 @@ ReviewMP Command → ReviewOrchestrator → ReviewHarness → Provider → Model
 
 - **ReviewOrchestrator**: Handles commands, progress, and cancellation
 - **ReviewHarness**: Bounded review loop with retry handling
-- **Provider**: Abstraction over OpenCode, CLI, or HTTP
+- **RuntimeAdapter**: Abstraction over CLI-based AI runtimes
 - **ToolExecutor**: Read-only tools for context gathering
 - **ContextCollector**: Git diff, branch detection, file reading
 
+ReviewMP is provider-agnostic - the same review workflow runs identically regardless of which runtime is selected. Authentication and runtime management are handled by the external runtime itself.
+
 ## Security
 
-- API keys stored in VS Code Secret Storage
+- No API key storage - authentication is delegated to the selected runtime
 - Read-only tool execution (no shell execution, no file writes during review)
 - Workspace reads constrained to active workspace
 - Git access read-only for review flows
-- No logging of API keys or full prompts
+- No logging of prompts or sensitive data
 
 ## Development
 
