@@ -69,6 +69,30 @@
       {
         "command": "reviewmp.toggleDebug",
         "title": "ReviewMP: Toggle Debug Mode"
+      },
+      {
+        "command": "reviewmp.reviewAllChanges",
+        "title": "ReviewMP: Review All Changes"
+      },
+      {
+        "command": "reviewmp.openFinding",
+        "title": "ReviewMP: Open Finding"
+      },
+      {
+        "command": "reviewmp.applyFindingFix",
+        "title": "ReviewMP: Apply Fix"
+      },
+      {
+        "command": "reviewmp.dismissFinding",
+        "title": "ReviewMP: Dismiss Finding"
+      },
+      {
+        "command": "reviewmp.clearActiveReview",
+        "title": "ReviewMP: Clear Active Review"
+      },
+      {
+        "command": "reviewmp.openReviewPanel",
+        "title": "ReviewMP: Open Review Panel"
       }
     ],
     "menus": {
@@ -101,6 +125,70 @@
           "command": "reviewmp.reviewFile",
           "group": "reviewmp@1",
           "when": "!explorerResourceIsFolder"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "reviewmp.clearActiveReview",
+          "when": "view == reviewmp.reviews",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "reviewmp.openFinding",
+          "when": "view == reviewmp.reviews && viewItem == finding",
+          "group": "navigation@1"
+        },
+        {
+          "command": "reviewmp.applyFindingFix",
+          "when": "view == reviewmp.reviews && viewItem == findingWithFix",
+          "group": "action@1"
+        },
+        {
+          "command": "reviewmp.dismissFinding",
+          "when": "view == reviewmp.reviews && viewItem == finding",
+          "group": "action@2"
+        },
+        {
+          "command": "reviewmp.openReviewPanel",
+          "when": "view == reviewmp.reviews && viewItem == previousReview",
+          "group": "navigation@1"
+        }
+      ],
+      "view/container/reviewmp": [
+        {
+          "command": "reviewmp.clearActiveReview",
+          "when": "view == reviewmp.reviews"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "reviewmp",
+          "title": "ReviewMP",
+          "icon": "$(github-inverted)"
+        }
+      ]
+    },
+    "views": {
+      "reviewmp": [
+        {
+          "id": "reviewmp.newReview",
+          "name": "NEW REVIEW"
+        },
+        {
+          "id": "reviewmp.filesToReview",
+          "name": "FILES TO REVIEW"
+        },
+        {
+          "id": "reviewmp.reviews",
+          "name": "REVIEWS"
+        },
+        {
+          "id": "reviewmp.previousReviews",
+          "name": "PREVIOUS REVIEWS"
         }
       ]
     },
