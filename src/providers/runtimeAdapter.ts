@@ -37,10 +37,7 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
     const executable = this.resolveExecutable();
 
     if (this.debug) {
-      console.log(`[CliRuntimeAdapter:${this.manifest.id}] Executable:`, executable);
-      console.log(`[CliRuntimeAdapter:${this.manifest.id}] Prompt length:`, promptResult.prompt.length);
-      console.log(`[CliRuntimeAdapter:${this.manifest.id}] Transport:`, this.manifest.promptTransport);
-      console.log(`[CliRuntimeAdapter:${this.manifest.id}] Output format:`, this.manifest.outputFormat);
+      console.log(`[RuntimeAdapter:${this.manifest.id}] Executable:`, executable);
     }
 
     return this.manifest.promptTransport === 'stdin'
@@ -116,7 +113,7 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
 
       this.currentProcess = spawn(executable, args, {
         cwd: this.workspaceRoot,
-        env: process.env,
+        env: this.buildChildEnv(),
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
@@ -134,7 +131,7 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
 
       this.currentProcess = spawn(executable, args, {
         cwd: this.workspaceRoot,
-        env: process.env,
+        env: this.buildChildEnv(),
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
@@ -175,6 +172,21 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
     return args;
   }
 
+  private buildChildEnv(): NodeJS.ProcessEnv {
+    const env = { ...process.env };
+
+    // Prevent other IDE integrations from hijacking non-Claude runtimes.
+    if (this.manifest.id !== 'claude') {
+      for (const key of Object.keys(env)) {
+        if (key.startsWith('CLAUDE_CODE_')) {
+          delete env[key];
+        }
+      }
+    }
+
+    return env;
+  }
+
   private collectOutput(
     resolve: (result: NormalizedReviewResult) => void,
     reject: (error: Error) => void,
@@ -199,7 +211,7 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
 
     const cancelHandler = () => {
       if (this.debug) {
-        console.log(`[CliRuntimeAdapter:${this.manifest.id}] Cancelled`);
+        console.log(`[RuntimeAdapter:${this.manifest.id}] Cancelled`);
       }
       proc.kill();
       reject(new Error('Review cancelled'));
@@ -208,15 +220,15 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
     this.cancellationToken?.onCancellationRequested(cancelHandler);
 
     proc.on('close', (code, signal) => {
-      if (this.debug) {
-        console.log(`[CliRuntimeAdapter:${this.manifest.id}] Process closed - code:`, code, 'signal:', signal);
-        console.log(`[CliRuntimeAdapter:${this.manifest.id}] stdout length:`, stdout.length);
+      if (this.debug && (code !== 0 || signal)) {
+        console.log(`[RuntimeAdapter:${this.manifest.id}] Process closed - code:`, code, 'signal:', signal);
       }
 
       this.cancellationToken?.onCancellationRequested(cancelHandler);
 
       if (code !== 0 && code !== null) {
-        reject(new Error(`${this.manifest.name} exited with code ${code}: ${stderr}`));
+        const errorOutput = stderr.trim() || stdout.trim() || 'No output';
+        reject(new Error(`${this.manifest.name} exited with code ${code}: ${errorOutput}`));
         return;
       }
 
@@ -230,7 +242,7 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
 
     proc.on('error', (error) => {
       if (this.debug) {
-        console.log(`[CliRuntimeAdapter:${this.manifest.id}] Process error:`, error.message);
+        console.log(`[RuntimeAdapter:${this.manifest.id}] Process error:`, error.message);
       }
       reject(new Error(`Failed to start ${this.manifest.name}: ${error.message}`));
     });
@@ -244,10 +256,6 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
     };
 
     const result = normalizer.normalize(rawOutput, context);
-
-    if (this.debug && result.comments.length === 0) {
-      console.log(`[CliRuntimeAdapter:${this.manifest.id}] No comments parsed from output:`, rawOutput.substring(0, 500));
-    }
 
     return {
       comments: result.comments,

@@ -428,9 +428,9 @@ describe('builtInRuntimes', () => {
     }
   });
 
-  it('opencode uses json output format', () => {
+  it('opencode uses ndjson output format', () => {
     const opencodeManifest = builtInRuntimes.find(m => m.id === 'opencode');
-    expect(opencodeManifest?.outputFormat).toBe('json');
+    expect(opencodeManifest?.outputFormat).toBe('ndjson');
   });
 
   it('gemini uses ndjson output format', () => {

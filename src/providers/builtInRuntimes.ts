@@ -66,7 +66,7 @@ export const builtInRuntimes: RuntimeManifest[] = [
     name: 'OpenCode',
     executable: 'opencode',
     promptTransport: 'argv',
-    outputFormat: 'json',
+    outputFormat: 'ndjson',
     supportsModelOverride: true,
     supportsExecutableOverride: true,
     supportsExtraArgs: true,

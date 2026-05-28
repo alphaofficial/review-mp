@@ -1,3 +1,5 @@
+import { Buffer } from 'buffer';
+import process from 'process';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { CliRuntimeAdapter } from '../../src/providers/runtimeAdapter';
 import { RuntimeManifest, RuntimeSettings } from '../../src/providers/runtimeRegistry';
@@ -29,7 +31,7 @@ const createOpencodeManifest = (): RuntimeManifest => ({
   name: 'OpenCode',
   executable: 'opencode',
   promptTransport: 'argv',
-  outputFormat: 'json',
+  outputFormat: 'ndjson',
   supportsModelOverride: true,
   supportsExecutableOverride: true,
   supportsExtraArgs: true,
@@ -43,6 +45,17 @@ const createSettings = (overrides: Partial<RuntimeSettings> = {}): RuntimeSettin
   autoReviewOnCommit: false,
   ...overrides,
 });
+
+const getSpawnArgv = (): string[] =>
+  (mockSpawn.mock.calls[0] as unknown as [string, string[]])[1];
+const getSpawnOptions = (): { env?: Record<string, string | undefined>; stdio?: unknown } => {
+  const [, , options] = mockSpawn.mock.calls[0] as unknown as [
+    string,
+    string[],
+    { env?: Record<string, string | undefined>; stdio?: unknown },
+  ];
+  return options;
+};
 
 describe('CliRuntimeAdapter', () => {
   beforeEach(() => {
@@ -149,7 +162,11 @@ describe('CliRuntimeAdapter process execution', () => {
     vi.restoreAllMocks();
   });
 
-  const createMockProcess = (stdoutData: string = '[{"line": 1, "message": "Test issue"}]', closeCode: number = 0) => {
+  const createMockProcess = (
+    stdoutData: string = '[{"line": 1, "message": "Test issue"}]',
+    closeCode: number = 0,
+    stderrData: string = ''
+  ) => {
     return {
       pid: 12345,
       kill: vi.fn(),
@@ -158,7 +175,11 @@ describe('CliRuntimeAdapter process execution', () => {
           cb(Buffer.from(stdoutData));
         }
       }) },
-      stderr: { on: vi.fn() },
+      stderr: { on: vi.fn((event, cb) => {
+        if (event === 'data' && stderrData) {
+          cb(Buffer.from(stderrData));
+        }
+      }) },
       stdin: { write: vi.fn(), end: vi.fn() },
       on: vi.fn((event, cb) => {
         if (event === 'close') {
@@ -212,9 +233,9 @@ describe('CliRuntimeAdapter process execution', () => {
 
       await adapter.invoke(request);
 
-      const spawnArgs = mockSpawn.mock.calls[0];
-      expect(spawnArgs[1]).toContain('--verbose');
-      expect(spawnArgs[1]).toContain('--debug');
+      const spawnArgs = getSpawnArgv();
+      expect(spawnArgs).toContain('--verbose');
+      expect(spawnArgs).toContain('--debug');
     });
 
     it('includes prePromptArgs when manifest specifies them', async () => {
@@ -237,10 +258,10 @@ describe('CliRuntimeAdapter process execution', () => {
 
       await adapter.invoke(request);
 
-      const spawnArgs = mockSpawn.mock.calls[0];
-      expect(spawnArgs[1]).toContain('run');
-      expect(spawnArgs[1]).toContain('--format');
-      expect(spawnArgs[1]).toContain('json');
+      const spawnArgs = getSpawnArgv();
+      expect(spawnArgs).toContain('run');
+      expect(spawnArgs).toContain('--format');
+      expect(spawnArgs).toContain('json');
     });
 
     it('includes model arg when manifest supports model override', async () => {
@@ -264,9 +285,50 @@ describe('CliRuntimeAdapter process execution', () => {
 
       await adapter.invoke(request);
 
-      const spawnArgs = mockSpawn.mock.calls[0];
-      expect(spawnArgs[1]).toContain('--model');
-      expect(spawnArgs[1]).toContain('claude-3-5-sonnet');
+      const spawnArgs = getSpawnArgv();
+      expect(spawnArgs).toContain('--model');
+      expect(spawnArgs).toContain('claude-3-5-sonnet');
+    });
+
+    it('removes Claude IDE env vars for non-claude runtimes', async () => {
+      const originalSsePort = process.env.CLAUDE_CODE_SSE_PORT;
+      const originalClientVersion = process.env.CLAUDE_CODE_CLIENT_VERSION;
+      process.env.CLAUDE_CODE_SSE_PORT = '63720';
+      process.env.CLAUDE_CODE_CLIENT_VERSION = '1.14.0';
+
+      try {
+        const mockProc = createMockProcess();
+        mockSpawn.mockReturnValue(mockProc);
+
+        const manifest = createOpencodeManifest();
+        const settings = createSettings();
+        const adapter = new CliRuntimeAdapter(manifest, settings);
+
+        const request = {
+          code: 'const x = 1;',
+          languageId: 'typescript',
+          filePath: 'test.ts',
+          reviewType: 'file' as const,
+        };
+
+        await adapter.invoke(request);
+
+        const spawnOptions = getSpawnOptions();
+        expect(spawnOptions.env?.CLAUDE_CODE_SSE_PORT).toBeUndefined();
+        expect(spawnOptions.env?.CLAUDE_CODE_CLIENT_VERSION).toBeUndefined();
+      } finally {
+        if (originalSsePort === undefined) {
+          delete process.env.CLAUDE_CODE_SSE_PORT;
+        } else {
+          process.env.CLAUDE_CODE_SSE_PORT = originalSsePort;
+        }
+
+        if (originalClientVersion === undefined) {
+          delete process.env.CLAUDE_CODE_CLIENT_VERSION;
+        } else {
+          process.env.CLAUDE_CODE_CLIENT_VERSION = originalClientVersion;
+        }
+      }
     });
 
     it('builds correct argv with prePromptArgs and model arg', async () => {
@@ -290,8 +352,7 @@ describe('CliRuntimeAdapter process execution', () => {
 
       await adapter.invoke(request);
 
-      const spawnArgs = mockSpawn.mock.calls[0];
-      const argv = spawnArgs[1];
+      const argv = getSpawnArgv();
       expect(argv[0]).toBe('run');
       expect(argv[1]).toBe('--format');
       expect(argv[2]).toBe('json');
@@ -408,7 +469,7 @@ describe('CliRuntimeAdapter process execution', () => {
 
   describe('error handling', () => {
     it('rejects when process exits with non-zero code', async () => {
-      const mockProc = createMockProcess('error output', 1);
+      const mockProc = createMockProcess('error output', 1, 'stderr output');
       mockProc.on = vi.fn((event, cb) => {
         if (event === 'close') {
           cb(1, null);
@@ -427,7 +488,30 @@ describe('CliRuntimeAdapter process execution', () => {
         reviewType: 'file' as const,
       };
 
-      await expect(adapter.invoke(request)).rejects.toThrow('OpenCode exited with code 1');
+      await expect(adapter.invoke(request)).rejects.toThrow('OpenCode exited with code 1: stderr output');
+    });
+
+    it('includes stdout in the error when stderr is empty', async () => {
+      const mockProc = createMockProcess('stdout failure details', 1);
+      mockProc.on = vi.fn((event, cb) => {
+        if (event === 'close') {
+          cb(1, null);
+        }
+      });
+      mockSpawn.mockReturnValue(mockProc);
+
+      const manifest = createOpencodeManifest();
+      const settings = createSettings();
+      const adapter = new CliRuntimeAdapter(manifest, settings);
+
+      const request = {
+        code: 'const x = 1;',
+        languageId: 'typescript',
+        filePath: 'test.ts',
+        reviewType: 'file' as const,
+      };
+
+      await expect(adapter.invoke(request)).rejects.toThrow('OpenCode exited with code 1: stdout failure details');
     });
 
     it('rejects when process errors', async () => {
@@ -503,8 +587,8 @@ describe('CliRuntimeAdapter prompt building', () => {
 
     await adapter.invoke(request);
 
-      expect(mockSpawn).toHaveBeenCalled();
-    const callArgs = mockSpawn.mock.calls[0][1];
+    expect(mockSpawn).toHaveBeenCalled();
+    const callArgs = getSpawnArgv();
     const promptArg = callArgs[callArgs.length - 1];
     expect(typeof promptArg).toBe('string');
     expect(promptArg.length).toBeGreaterThan(0);
@@ -566,9 +650,9 @@ describe('Runtime manifest-level tests', () => {
 
       await adapter.invoke(baseRequest);
 
-      const spawnArgs = mockSpawn.mock.calls[0];
-      expect(spawnArgs[1]).not.toContain('--model');
-      expect(spawnArgs[1]).not.toContain('claude-3-5-sonnet');
+      const spawnArgs = getSpawnArgv();
+      expect(spawnArgs).not.toContain('--model');
+      expect(spawnArgs).not.toContain('claude-3-5-sonnet');
     });
 
     it('passes extra args when provided', async () => {
@@ -590,8 +674,8 @@ describe('Runtime manifest-level tests', () => {
 
       await adapter.invoke(baseRequest);
 
-      const spawnArgs = mockSpawn.mock.calls[0];
-      expect(spawnArgs[1]).toContain('--verbose');
+      const spawnArgs = getSpawnArgv();
+      expect(spawnArgs).toContain('--verbose');
     });
   });
 
@@ -615,8 +699,8 @@ describe('Runtime manifest-level tests', () => {
 
       await adapter.invoke(baseRequest);
 
-      const spawnArgs = mockSpawn.mock.calls[0];
-      expect(spawnArgs[1]).not.toContain('--model');
+      const spawnArgs = getSpawnArgv();
+      expect(spawnArgs).not.toContain('--model');
     });
 
     it('passes extra args when provided', async () => {
@@ -638,8 +722,8 @@ describe('Runtime manifest-level tests', () => {
 
       await adapter.invoke(baseRequest);
 
-      const spawnArgs = mockSpawn.mock.calls[0];
-      expect(spawnArgs[1]).toContain('--debug');
+      const spawnArgs = getSpawnArgv();
+      expect(spawnArgs).toContain('--debug');
     });
   });
 
@@ -663,8 +747,8 @@ describe('Runtime manifest-level tests', () => {
 
       await adapter.invoke(baseRequest);
 
-      const spawnArgs = mockSpawn.mock.calls[0];
-      expect(spawnArgs[1]).not.toContain('--model');
+      const spawnArgs = getSpawnArgv();
+      expect(spawnArgs).not.toContain('--model');
     });
 
     it('passes extra args when provided', async () => {
@@ -686,8 +770,8 @@ describe('Runtime manifest-level tests', () => {
 
       await adapter.invoke(baseRequest);
 
-      const spawnArgs = mockSpawn.mock.calls[0];
-      expect(spawnArgs[1]).toContain('--verbose');
+      const spawnArgs = getSpawnArgv();
+      expect(spawnArgs).toContain('--verbose');
     });
   });
 
@@ -733,8 +817,8 @@ describe('Runtime manifest-level tests', () => {
 
       await adapter.invoke(baseRequest);
 
-      const spawnArgs = mockSpawn.mock.calls[0];
-      expect(spawnArgs[1]).not.toContain('--model');
+      const spawnArgs = getSpawnArgv();
+      expect(spawnArgs).not.toContain('--model');
     });
 
     it('passes extra args when provided', async () => {
@@ -756,8 +840,8 @@ describe('Runtime manifest-level tests', () => {
 
       await adapter.invoke(baseRequest);
 
-      const spawnArgs = mockSpawn.mock.calls[0];
-      expect(spawnArgs[1]).toContain('--debug');
+      const spawnArgs = getSpawnArgv();
+      expect(spawnArgs).toContain('--debug');
     });
   });
 
@@ -781,8 +865,8 @@ describe('Runtime manifest-level tests', () => {
 
       await adapter.invoke(baseRequest);
 
-      const spawnArgs = mockSpawn.mock.calls[0];
-      expect(spawnArgs[1]).not.toContain('--model');
+      const spawnArgs = getSpawnArgv();
+      expect(spawnArgs).not.toContain('--model');
     });
 
     it('passes extra args when provided', async () => {
@@ -804,8 +888,8 @@ describe('Runtime manifest-level tests', () => {
 
       await adapter.invoke(baseRequest);
 
-      const spawnArgs = mockSpawn.mock.calls[0];
-      expect(spawnArgs[1]).toContain('--verbose');
+      const spawnArgs = getSpawnArgv();
+      expect(spawnArgs).toContain('--verbose');
     });
   });
 
@@ -829,8 +913,8 @@ describe('Runtime manifest-level tests', () => {
 
       await adapter.invoke(baseRequest);
 
-      const spawnArgs = mockSpawn.mock.calls[0];
-      expect(spawnArgs[1]).not.toContain('--model');
+      const spawnArgs = getSpawnArgv();
+      expect(spawnArgs).not.toContain('--model');
     });
 
     it('passes extra args when provided', async () => {
@@ -852,8 +936,8 @@ describe('Runtime manifest-level tests', () => {
 
       await adapter.invoke(baseRequest);
 
-      const spawnArgs = mockSpawn.mock.calls[0];
-      expect(spawnArgs[1]).toContain('--debug');
+      const spawnArgs = getSpawnArgv();
+      expect(spawnArgs).toContain('--debug');
     });
   });
 });
