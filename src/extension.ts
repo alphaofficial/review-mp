@@ -12,6 +12,7 @@ import { getSettings, registerSettingsCommands } from './settings';
 import { ReviewTreeProvider, ReviewTreeViewId } from './reviewTreeProvider';
 import { getReviewSessionStore } from './store/reviewSessionStore';
 import { FixApplicator, createFixApplicator } from './harness/fixApplicator';
+import { ReviewDecorationController } from './reviewDecorationController';
 
 class RuntimeProviderAdapter implements ModelProvider {
   readonly name: string;
@@ -48,6 +49,7 @@ let commentController: ReviewCommentController;
 let orchestrator: ReviewOrchestrator;
 let gitWatcher: GitWatcher | undefined;
 let treeProviders: ReviewTreeProvider[] = [];
+let decorationController: ReviewDecorationController;
 let store = getReviewSessionStore();
 
 export function activate(context: vscode.ExtensionContext) {
@@ -100,6 +102,8 @@ export function activate(context: vscode.ExtensionContext) {
       treeProvider
     );
   }
+
+  decorationController = new ReviewDecorationController(context, store);
 
   if (gitWatcher) {
     gitWatcher.dispose();
@@ -369,6 +373,7 @@ export function activate(context: vscode.ExtensionContext) {
     openReviewPanelCommand,
     commentController,
     orchestrator,
+    decorationController,
     store
   );
 }
@@ -387,6 +392,9 @@ export function deactivate() {
     provider.dispose();
   }
   treeProviders = [];
+  if (decorationController) {
+    decorationController.dispose();
+  }
   if (store) {
     store.dispose();
   }
