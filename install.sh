@@ -1,14 +1,9 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-set -e
+set -euo pipefail
 
 echo "ReviewMP Installation Script"
 echo "====================================================================="
-
-# Step 0: Pull latest changes from git
-echo "Step 0: Pulling latest changes from git..."
-git pull origin main || echo "Warning: Could not pull from git"
-echo ""
 
 # Check if Node.js is installed
 if ! command -v node &> /dev/null; then
@@ -26,6 +21,26 @@ fi
 
 echo "npm version: $(npm --version)"
 
+VSIX_FILE="$(node -p "const p=require('./package.json'); \`\${p.name}-\${p.version}.vsix\`")"
+SUPPORTED_RUNTIMES=("claude" "copilot" "codex" "gemini" "hermes" "pi" "opencode")
+AVAILABLE_RUNTIMES=()
+
+for runtime in "${SUPPORTED_RUNTIMES[@]}"; do
+    if command -v "$runtime" &> /dev/null; then
+        AVAILABLE_RUNTIMES+=("$runtime")
+    fi
+done
+
+echo ""
+echo "Runtime check:"
+if [ ${#AVAILABLE_RUNTIMES[@]} -eq 0 ]; then
+    echo "Warning: No supported runtime CLI found on PATH."
+    echo "Install and authenticate one of: ${SUPPORTED_RUNTIMES[*]}"
+else
+    echo "Found runtime CLI(s): ${AVAILABLE_RUNTIMES[*]}"
+fi
+echo "Runtime selection is configured in VS Code via 'ReviewMP: Select Runtime'."
+
 # Step 1: Install dependencies
 echo ""
 echo "Step 1: Installing npm dependencies..."
@@ -41,19 +56,11 @@ echo ""
 echo "Step 3: Packaging extension as VSIX..."
 npx @vscode/vsce package
 
-# Step 4: Copy agent to opencode config location
+# Step 4: Install in VS Code
 echo ""
-echo "Step 4: Installing reviewmp agent to opencode config..."
-OPENCODE_AGENTS_DIR="$HOME/.config/opencode/agent"
-mkdir -p "$OPENCODE_AGENTS_DIR"
-cp opencode-agent/reviewmp.md "$OPENCODE_AGENTS_DIR/"
-echo "Agent installed to $OPENCODE_AGENTS_DIR/reviewmp.md"
-
-# Step 5: Install in VS Code
-echo ""
-echo "Step 5: Installing extension in VS Code..."
+echo "Step 4: Installing extension in VS Code..."
 if command -v code &> /dev/null; then
-    code --install-extension reviewmp-0.0.1.vsix
+    code --install-extension "$VSIX_FILE"
     echo ""
     echo "Installation complete!"
     echo "Please reload VS Code to activate the extension:"
@@ -65,7 +72,7 @@ else
     echo "1. Open VS Code"
     echo "2. Go to Extensions (Cmd+Shift+X / Ctrl+Shift+X)"
     echo "3. Click 'Install from VSIX...'"
-    echo "4. Select: reviewmp-0.0.1.vsix"
+    echo "4. Select: $VSIX_FILE"
     echo "5. Reload VS Code when prompted"
 fi
 

@@ -1,7 +1,7 @@
 {
   "name": "reviewmp",
   "displayName": "ReviewMP - AI Code Review",
-  "description": "AI-powered code review with inline comments using OpenCode CLI",
+  "description": "Runtime-agnostic AI code review with inline comments",
   "version": "0.0.1",
   "publisher": "reviewmp",
   "repository": {
@@ -59,8 +59,18 @@
       },
       {
         "command": "reviewmp.rejectComment",
-        "title": "Reject",
-        "icon": "$(x)"
+        "title": "Dismiss",
+        "icon": "$(circle-slash)"
+      },
+      {
+        "command": "reviewmp.copyComment",
+        "title": "Copy Comment",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "reviewmp.collapseComment",
+        "title": "Collapse",
+        "icon": "$(chevron-up)"
       },
       {
         "command": "reviewmp.selectRuntime",
@@ -69,6 +79,30 @@
       {
         "command": "reviewmp.toggleDebug",
         "title": "ReviewMP: Toggle Debug Mode"
+      },
+      {
+        "command": "reviewmp.reviewAllChanges",
+        "title": "ReviewMP: Review All Changes"
+      },
+      {
+        "command": "reviewmp.openFinding",
+        "title": "ReviewMP: Open Finding"
+      },
+      {
+        "command": "reviewmp.applyFindingFix",
+        "title": "ReviewMP: Apply Fix"
+      },
+      {
+        "command": "reviewmp.dismissFinding",
+        "title": "ReviewMP: Dismiss Finding"
+      },
+      {
+        "command": "reviewmp.clearActiveReview",
+        "title": "ReviewMP: Clear Active Review"
+      },
+      {
+        "command": "reviewmp.openReviewPanel",
+        "title": "ReviewMP: Open Review Panel"
       }
     ],
     "menus": {
@@ -76,12 +110,22 @@
         {
           "command": "reviewmp.acceptFix",
           "group": "inline@1",
-          "when": "commentController == reviewmp && comment =~ /with-fix/"
+          "when": "commentController == reviewmp && comment == reviewmp-with-fix"
         },
         {
           "command": "reviewmp.rejectComment",
           "group": "inline@2",
-          "when": "commentController == reviewmp"
+          "when": "commentController == reviewmp && (comment == reviewmp || comment == reviewmp-with-fix)"
+        },
+        {
+          "command": "reviewmp.copyComment",
+          "group": "inline@3",
+          "when": "commentController == reviewmp && (comment == reviewmp || comment == reviewmp-with-fix)"
+        },
+        {
+          "command": "reviewmp.collapseComment",
+          "group": "inline@4",
+          "when": "commentController == reviewmp && (comment == reviewmp || comment == reviewmp-with-fix)"
         }
       ],
       "editor/context": [
@@ -101,6 +145,74 @@
           "command": "reviewmp.reviewFile",
           "group": "reviewmp@1",
           "when": "!explorerResourceIsFolder"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "reviewmp.clearActiveReview",
+          "when": "view == reviewmp.reviews",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "reviewmp.openFinding",
+          "when": "view == reviewmp.reviews && viewItem == finding",
+          "group": "navigation@1"
+        },
+        {
+          "command": "reviewmp.applyFindingFix",
+          "when": "view == reviewmp.reviews && viewItem == findingWithFix",
+          "group": "action@1"
+        },
+        {
+          "command": "reviewmp.dismissFinding",
+          "when": "view == reviewmp.reviews && viewItem == finding",
+          "group": "action@2"
+        },
+        {
+          "command": "reviewmp.openReviewPanel",
+          "when": "view == reviewmp.reviews && viewItem == previousReview",
+          "group": "navigation@1"
+        }
+      ],
+      "view/container/reviewmp": [
+        {
+          "command": "reviewmp.clearActiveReview",
+          "when": "view == reviewmp.reviews"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "reviewmp",
+          "title": "ReviewMP",
+          "icon": "resources/reviewmp.svg"
+        }
+      ]
+    },
+    "views": {
+      "reviewmp": [
+        {
+          "id": "reviewmp.newReview",
+          "name": "NEW REVIEW",
+          "icon": "$(git-compare)"
+        },
+        {
+          "id": "reviewmp.filesToReview",
+          "name": "FILES",
+          "icon": "$(files)"
+        },
+        {
+          "id": "reviewmp.reviews",
+          "name": "REVIEWS",
+          "icon": "$(comment-discussion)"
+        },
+        {
+          "id": "reviewmp.previousReviews",
+          "name": "PREVIOUS REVIEWS",
+          "icon": "$(history)"
         }
       ]
     },

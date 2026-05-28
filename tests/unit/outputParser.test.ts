@@ -132,6 +132,13 @@ more random text`;
       expect(result[0].fix).toBe('code fix');
     });
 
+    it('preserves optional title field when present', () => {
+      const input = [{ line: 1, title: 'Add null guard', message: 'This can crash.' }];
+      const result = validateComments(input, 'test.ts');
+      expect(result[0].title).toBe('Add null guard');
+      expect(result[0].message).toBe('This can crash.');
+    });
+
     it('omits fix field when missing or not a string', () => {
       const input = [
         { line: 1, message: 'No fix' },

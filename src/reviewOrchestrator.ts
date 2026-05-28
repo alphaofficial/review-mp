@@ -5,16 +5,19 @@ import { ReviewRequest } from './types/review';
 import { DiffContextCollector } from './harness/diffContextCollector';
 import { clusterDiff, parseDiffIntoFiles } from './harness/diffClustering';
 import { buildCrossFilePrompt, checkCrossFileConsistency, CrossFileConsistencyResult } from './harness/crossFileConsistencyPass';
+import { ReviewSessionStore } from './store/reviewSessionStore';
 
 export class ReviewOrchestrator implements vscode.Disposable {
   private getProvider: () => ModelProvider;
   private commentController: ReviewCommentController;
   private diffCollector: DiffContextCollector;
+  private store: ReviewSessionStore;
 
-  constructor(getProvider: () => ModelProvider, commentController: ReviewCommentController) {
+  constructor(getProvider: () => ModelProvider, commentController: ReviewCommentController, store: ReviewSessionStore) {
     this.getProvider = getProvider;
     this.commentController = commentController;
     this.diffCollector = new DiffContextCollector();
+    this.store = store;
   }
 
   async reviewFile(document: vscode.TextDocument): Promise<void> {
@@ -68,9 +71,21 @@ export class ReviewOrchestrator implements vscode.Disposable {
     this.commentController.clearAllComments();
   }
 
+  clearActiveReview(): void {
+    this.store.clearActiveSession();
+    this.commentController.clearAllComments();
+  }
+
   private async reviewCode(request: ReviewRequest): Promise<void> {
     const typeLabel = 'code';
     const startLine = request.startLine ?? 0;
+
+    const session = this.store.createSession(request.reviewType, undefined, undefined, undefined);
+    if (request.filePath) {
+      this.store.setFilesToReview([request.filePath]);
+    }
+    this.store.updateSessionStatus('settingUp');
+
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -79,28 +94,37 @@ export class ReviewOrchestrator implements vscode.Disposable {
       },
       async (progress, token) => {
         try {
+          this.store.updateSessionStatus('analyzing');
           const result = await this.getProvider().review(request, token);
 
           if (token.isCancellationRequested) {
+            this.store.clearActiveSession();
             return;
           }
 
           if (result.comments.length === 0) {
+            this.store.updateSessionStatus('completed');
             vscode.window.showInformationMessage('No issues found in the code');
             return;
           }
+
+          this.store.updateSessionStatus('reviewing');
 
           const adjustedComments = result.comments.map((c) => ({
             ...c,
             line: c.line + startLine,
           }));
 
-          this.commentController.addComments(vscode.Uri.file(request.filePath), adjustedComments, request.languageId);
+          const findings = this.store.addFindingsFromComments(adjustedComments);
+          this.commentController.addComments(vscode.Uri.file(request.filePath), findings, request.languageId);
+
+          this.store.updateSessionStatus('completed');
           vscode.window.showInformationMessage(
             `ReviewMP: Found ${result.comments.length} comment(s)`
           );
         } catch (error) {
           if (error instanceof Error) {
+            this.store.setSessionError(error.message);
             vscode.window.showErrorMessage(`ReviewMP Error: ${error.message}`);
           }
         }
@@ -117,6 +141,9 @@ export class ReviewOrchestrator implements vscode.Disposable {
       pullRequest: 'pull request changes',
     };
 
+    const session = this.store.createSession(type);
+    this.store.updateSessionStatus('settingUp');
+
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -125,9 +152,12 @@ export class ReviewOrchestrator implements vscode.Disposable {
       },
       async (progress, token) => {
         try {
+          this.store.updateSessionStatus('analyzing');
           const diffResult = await this.diffCollector.getDiff(type, token);
+          this.store.setFilesToReview(this.getFilePathsFromDiff(diffResult.diff));
 
           if (token.isCancellationRequested) {
+            this.store.clearActiveSession();
             return;
           }
 
@@ -142,25 +172,30 @@ export class ReviewOrchestrator implements vscode.Disposable {
               diff: diffResult.formattedDiff,
             };
 
-          const result = await this.getProvider().review(request, token);
+            const result = await this.getProvider().review(request, token);
 
             if (token.isCancellationRequested) {
+              this.store.clearActiveSession();
               return;
             }
 
             if (result.comments.length === 0) {
+              this.store.updateSessionStatus('completed');
               vscode.window.showInformationMessage('No issues found in the changes');
               return;
             }
 
+            this.store.updateSessionStatus('reviewing');
             await this.addDiffComments(result.comments);
 
+            this.store.updateSessionStatus('completed');
             vscode.window.showInformationMessage(
               `ReviewMP: Found ${result.comments.length} comment(s) in ${labels[type]}`
             );
           }
         } catch (error) {
           if (error instanceof Error) {
+            this.store.setSessionError(error.message);
             vscode.window.showErrorMessage(`ReviewMP Error: ${error.message}`);
           }
         }
@@ -170,11 +205,15 @@ export class ReviewOrchestrator implements vscode.Disposable {
 
   private async reviewPullRequest(formattedDiff: string, token?: vscode.CancellationToken): Promise<void> {
     const clusteringResult = clusterDiff({ diff: formattedDiff, formattedDiff });
+    this.store.setFilesToReview(clusteringResult.clusters.flatMap(cluster => cluster.files));
 
     if (clusteringResult.totalFiles === 0) {
+      this.store.updateSessionStatus('completed');
       vscode.window.showInformationMessage('No changes found in the pull request');
       return;
     }
+
+    this.store.updateSessionStatus('reviewing');
 
     const allComments: ReviewComment[] = [];
     const clusterResults: { clusterId: number; comments: ReviewComment[]; files: string[] }[] = [];
@@ -191,6 +230,7 @@ export class ReviewOrchestrator implements vscode.Disposable {
       const result = await this.getProvider().review(request, token);
 
       if (token?.isCancellationRequested) {
+        this.store.clearActiveSession();
         return;
       }
 
@@ -206,6 +246,7 @@ export class ReviewOrchestrator implements vscode.Disposable {
       const maxParallelClusters = 4;
       for (let i = 0; i < clusteringResult.clusters.length; i += maxParallelClusters) {
         if (token?.isCancellationRequested) {
+          this.store.clearActiveSession();
           return;
         }
 
@@ -247,6 +288,7 @@ export class ReviewOrchestrator implements vscode.Disposable {
     }
 
     if (token?.isCancellationRequested) {
+      this.store.clearActiveSession();
       return;
     }
 
@@ -270,6 +312,7 @@ export class ReviewOrchestrator implements vscode.Disposable {
       const crossFileReviewResult = await this.getProvider().review(crossFileRequest, token);
 
       if (token?.isCancellationRequested) {
+        this.store.clearActiveSession();
         return;
       }
 
@@ -284,12 +327,14 @@ export class ReviewOrchestrator implements vscode.Disposable {
     const finalComments = [...allComments, ...crossFileResult.comments];
 
     if (finalComments.length === 0) {
+      this.store.updateSessionStatus('completed');
       vscode.window.showInformationMessage('No issues found in the pull request');
       return;
     }
 
     await this.addDiffComments(finalComments);
 
+    this.store.updateSessionStatus('completed');
     vscode.window.showInformationMessage(
       `ReviewMP: Found ${finalComments.length} comment(s) in pull request`
     );
@@ -309,9 +354,10 @@ export class ReviewOrchestrator implements vscode.Disposable {
     }
 
     for (const [filePath, fileComments] of commentsByFile) {
-      const uri = vscode.Uri.joinPath(workspaceFolder.uri, filePath);
+      const normalizedFilePath = this.normalizeDiffFilePath(filePath);
+      const uri = vscode.Uri.joinPath(workspaceFolder.uri, normalizedFilePath);
 
-      const ext = filePath.split('.').pop() || '';
+      const ext = normalizedFilePath.split('.').pop() || '';
       const languageMap: Record<string, string> = {
         ts: 'typescript',
         tsx: 'typescriptreact',
@@ -331,8 +377,43 @@ export class ReviewOrchestrator implements vscode.Disposable {
       };
       const languageId = languageMap[ext] || ext;
 
-      this.commentController.addComments(uri, fileComments, languageId);
+      const findings = this.store.addFindingsFromComments(
+        fileComments.map(comment => ({
+          ...comment,
+          file: uri.fsPath,
+        }))
+      );
+      this.commentController.addComments(uri, findings, languageId);
     }
+  }
+
+  private normalizeDiffFilePath(filePath: string): string {
+    return filePath.replace(/^\/+/, '');
+  }
+
+  private getFilePathsFromDiff(diff: string): string[] {
+    const filePaths: string[] = [];
+    const regex = /^diff --git a\/(.+?) b\/(.+)$/gm;
+    let match: RegExpExecArray | null;
+
+    while ((match = regex.exec(diff)) !== null) {
+      filePaths.push(this.resolveChangedFilePath(match[1], match[2]));
+    }
+
+    return filePaths.map(filePath => this.resolveWorkspaceFilePath(filePath));
+  }
+
+  private resolveChangedFilePath(oldPath: string, newPath: string): string {
+    return newPath === '/dev/null' ? oldPath : newPath;
+  }
+
+  private resolveWorkspaceFilePath(filePath: string): string {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      return this.normalizeDiffFilePath(filePath);
+    }
+
+    return vscode.Uri.joinPath(workspaceFolder.uri, this.normalizeDiffFilePath(filePath)).fsPath;
   }
 
   dispose(): void {

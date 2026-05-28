@@ -49,11 +49,23 @@ npm run compile
 
 ### 2. Install in VS Code
 
-**Option A: Development mode**
+**Option A: Install latest VSIX from GitHub Releases**
+
+```bash
+curl -L https://github.com/alphaofficial/review-mp/releases/latest/download/reviewmp.vsix -o /tmp/reviewmp.vsix && code --install-extension /tmp/reviewmp.vsix
+```
+
+Stable VSIX URL:
+
+```text
+https://github.com/alphaofficial/review-mp/releases/latest/download/reviewmp.vsix
+```
+
+**Option B: Development mode**
 
 Press F5 in VS Code to launch Extension Development Host.
 
-**Option B: Package and install locally**
+**Option C: Package and install locally**
 
 Run the automated install script:
 ```bash
@@ -83,11 +95,11 @@ If the automated script doesn't work, you can run these steps manually:
    ```bash
    npx @vscode/vsce package
    ```
-   This creates `reviewmp-0.0.1.vsix`
+   This creates `reviewmp-<version>.vsix`
 
 3. Install in VS Code:
    ```bash
-   code --install-extension reviewmp-0.0.1.vsix
+   code --install-extension reviewmp-<version>.vsix
    ```
 
 4. Reload VS Code:
@@ -255,7 +267,7 @@ Sometimes you want to install a local VSIX on a remote machine, either during de
 
 Resolution: Once you have connected to an SSH host, container, or WSL, you can install the VSIX the same way you would locally. Run the Extensions: Install from VSIX... command from the Command Palette (F1). You may also want to add "extensions.autoUpdate": false to settings.json to prevent auto-updating to the latest Marketplace version. See Supporting Remote Development for more information on developing and testing extensions in a remote environment.
 
-For remote run: `code --install-extension /path/to/reviewmp-0.0.1.vsix`
+For remote run: `code --install-extension /path/to/reviewmp-<version>.vsix`
 
 [VSCode Docs](https://code.visualstudio.com/docs/remote/troubleshooting#_extension-tips)
 

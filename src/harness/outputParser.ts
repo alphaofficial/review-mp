@@ -524,6 +524,7 @@ export class OutputParser {
       .map((item) => ({
         file: (item.file as string) || defaultFilePath,
         line: (item.line as number) - 1,
+        title: typeof item.title === 'string' ? item.title : undefined,
         message: item.message as string,
         fix: typeof item.fix === 'string' ? item.fix : undefined,
         severity: this.validateSeverity(item.severity),
@@ -547,6 +548,7 @@ export class OutputParser {
       .map((item) => ({
         file: (item.file as string) || '',
         line: (item.line as number) - 1,
+        title: typeof item.title === 'string' ? item.title : undefined,
         message: item.message as string,
         fix: typeof item.fix === 'string' ? item.fix : undefined,
         severity: this.validateSeverity(item.severity),
@@ -639,6 +641,7 @@ export function validateComments(
       .map((item) => ({
         file: (item.file as string) || filePath || '',
         line: convertToZeroBased ? (item.line as number) - 1 : (item.line as number),
+        title: typeof item.title === 'string' ? item.title : undefined,
         message: item.message as string,
         fix: typeof item.fix === 'string' ? item.fix : undefined,
         severity: validateSeverity(item.severity),
