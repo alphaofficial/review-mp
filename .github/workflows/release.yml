@@ -1,0 +1,134 @@
+name: Release
+
+# CalVer release workflow.
+#
+# Tags are formatted as YYYY.MM.DD, with a `.N` suffix for additional releases
+# on the same day (e.g. 2026.04.12, 2026.04.12.1, 2026.04.12.2).
+#
+# Manual only: trigger from the Actions tab when you're ready to cut a release.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Compute CalVer tag
+        id: tag
+        run: |
+          set -euo pipefail
+          DATE="$(date -u +%Y.%m.%d)"
+          git fetch --tags --quiet
+          existing=$(git tag --list "${DATE}" "${DATE}.*" | sort -V)
+          if [ -z "$existing" ]; then
+            TAG="$DATE"
+          else
+            n=1
+            while echo "$existing" | grep -qx "${DATE}.${n}"; do
+              n=$((n + 1))
+            done
+            TAG="${DATE}.${n}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag: $TAG"
+
+      - name: Create tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.tag.outputs.tag }}" -m "Release ${{ steps.tag.outputs.tag }}"
+          git push origin "${{ steps.tag.outputs.tag }}"
+
+  build:
+    needs: tag
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set package version from CalVer tag
+        run: |
+          TAG="${{ needs.tag.outputs.tag }}"
+          VERSION="$(TAG="$TAG" node -e 'const parts = process.env.TAG.split("."); const [year, month, day, build] = parts; const base = `${Number(year)}.${Number(month)}.${Number(day)}`; console.log(build ? `${base}-${Number(build)}` : base);')"
+          npm version "$VERSION" --no-git-tag-version
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Test
+        run: npm test
+
+      - name: Package VSIX
+        run: npx --yes @vscode/vsce package --out reviewmp.vsix
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: reviewmp-vsix
+          path: reviewmp.vsix
+          if-no-files-found: error
+
+  release:
+    needs: [tag, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate release notes
+        run: |
+          set -euo pipefail
+          git fetch --tags --quiet
+          PREVIOUS_TAG="$(git describe --tags --abbrev=0 "${{ needs.tag.outputs.tag }}^" 2>/dev/null || true)"
+          if [ -n "$PREVIOUS_TAG" ]; then
+            RANGE="$PREVIOUS_TAG..${{ needs.tag.outputs.tag }}"
+          else
+            RANGE="${{ needs.tag.outputs.tag }}"
+          fi
+
+          {
+            echo "## Changelog"
+            echo
+            git log --pretty=format:'- %s' "$RANGE"
+          } > release-notes.md
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp artifacts/reviewmp.vsix reviewmp.vsix
+          gh release create "${{ needs.tag.outputs.tag }}" \
+            --title "${{ needs.tag.outputs.tag }}" \
+            --notes-file release-notes.md \
+            --latest \
+            reviewmp.vsix

@@ -1,7 +1,7 @@
 {
   "name": "reviewmp",
   "displayName": "ReviewMP - AI Code Review",
-  "description": "AI-powered code review with inline comments using OpenCode CLI",
+  "description": "Runtime-agnostic AI code review with inline comments",
   "version": "0.0.1",
   "publisher": "reviewmp",
   "repository": {
