@@ -162,10 +162,15 @@ export class ReviewSessionStore extends EventEmitter {
     return finding;
   }
 
-  addFindingsFromComments(comments: Array<{ file: string; line: number; message: string; severity?: Severity; fix?: string }>): void {
+  addFindingsFromComments(comments: Array<{ file: string; line: number; message: string; severity?: Severity; fix?: string }>): ReviewFinding[] {
+    const findings: ReviewFinding[] = [];
     for (const comment of comments) {
-      this.addFinding(comment.file, comment.line, comment.message, comment.severity || 'info', comment.fix);
+      const finding = this.addFinding(comment.file, comment.line, comment.message, comment.severity || 'info', comment.fix);
+      if (finding) {
+        findings.push(finding);
+      }
     }
+    return findings;
   }
 
   getFinding(findingId: string): ReviewFinding | undefined {

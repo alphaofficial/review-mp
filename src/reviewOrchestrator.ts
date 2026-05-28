@@ -112,8 +112,8 @@ export class ReviewOrchestrator implements vscode.Disposable {
             line: c.line + startLine,
           }));
 
-          this.store.addFindingsFromComments(adjustedComments);
-          this.commentController.addComments(vscode.Uri.file(request.filePath), adjustedComments, request.languageId);
+          const findings = this.store.addFindingsFromComments(adjustedComments);
+          this.commentController.addComments(vscode.Uri.file(request.filePath), findings, request.languageId);
 
           this.store.updateSessionStatus('completed');
           vscode.window.showInformationMessage(
@@ -371,8 +371,8 @@ export class ReviewOrchestrator implements vscode.Disposable {
       };
       const languageId = languageMap[ext] || ext;
 
-      this.store.addFindingsFromComments(fileComments);
-      this.commentController.addComments(uri, fileComments, languageId);
+      const findings = this.store.addFindingsFromComments(fileComments);
+      this.commentController.addComments(uri, findings, languageId);
     }
   }
 

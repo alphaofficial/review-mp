@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ModelProvider } from './providers/modelProvider';
 import { FixApplicator, createFixApplicator } from './harness/fixApplicator';
+import { ReviewFinding, ReviewSessionStore } from './store/reviewSessionStore';
 
 export interface ReviewComment {
   file: string;
@@ -15,18 +16,20 @@ interface CommentData {
   line: number;
   fix?: string;
   thread: vscode.CommentThread;
+  findingId: string;
 }
 
 export class ReviewCommentController implements vscode.Disposable {
   private controller: vscode.CommentController;
   private threads: Map<string, vscode.CommentThread[]> = new Map();
   private commentDataMap: WeakMap<vscode.Comment, CommentData> = new WeakMap();
-  private provider: ModelProvider;
+  private findingIdToComment: Map<string, vscode.Comment> = new Map();
   private fixApplicator: FixApplicator;
+  private store: ReviewSessionStore | null = null;
 
-  constructor(context: vscode.ExtensionContext, provider?: ModelProvider, fixApplicator?: FixApplicator) {
-    this.provider = provider!;
+  constructor(context: vscode.ExtensionContext, provider?: ModelProvider, fixApplicator?: FixApplicator, store?: ReviewSessionStore) {
     this.fixApplicator = fixApplicator || createFixApplicator();
+    this.store = store || null;
     this.controller = vscode.comments.createCommentController(
       'reviewmp',
       'ReviewMP Comments'
@@ -42,38 +45,67 @@ export class ReviewCommentController implements vscode.Disposable {
         this.rejectComment(comment)
       )
     );
+
+    if (this.store) {
+      this.store.on('finding-updated', this.onFindingUpdated.bind(this));
+      this.store.on('session-cleared', this.onSessionCleared.bind(this));
+    }
   }
 
-  addComments(uri: vscode.Uri, comments: ReviewComment[], languageId?: string) {
-    // Clear existing comments for this file
+  private onFindingUpdated(data: { sessionId: string; findingId: string; action: 'apply' | 'dismiss' }): void {
+    const comment = this.findingIdToComment.get(data.findingId);
+    if (!comment) {
+      return;
+    }
+
+    const commentData = this.commentDataMap.get(comment);
+    if (!commentData) {
+      return;
+    }
+
+    if (data.action === 'apply' || data.action === 'dismiss') {
+      commentData.thread.dispose();
+      this.removeThreadFromMap(commentData.uri, commentData.thread);
+      this.findingIdToComment.delete(data.findingId);
+    }
+  }
+
+  private onSessionCleared(): void {
+    this.clearAllComments();
+  }
+
+  addComments(uri: vscode.Uri, findings: ReviewFinding[], languageId?: string) {
     this.clearCommentsForFile(uri);
 
     const threads: vscode.CommentThread[] = [];
 
-    for (const comment of comments) {
-      const range = new vscode.Range(comment.line, 0, comment.line, 0);
+    for (const finding of findings) {
+      const range = new vscode.Range(finding.line, 0, finding.line, 0);
       const thread = this.controller.createCommentThread(uri, range, []);
 
-      const body = this.createCommentBody(comment.message, comment.fix, languageId);
-      
+      const body = this.createCommentBody(finding.message, finding.fix, languageId);
+
       const reviewComment: vscode.Comment = {
         body,
         mode: vscode.CommentMode.Preview,
         author: { name: 'ReviewMP' },
-        contextValue: comment.fix ? 'reviewmp-with-fix' : 'reviewmp',
+        contextValue: finding.fix ? 'reviewmp-with-fix' : 'reviewmp',
       };
 
-      // Store data for later retrieval
-      this.commentDataMap.set(reviewComment, {
+      const commentData: CommentData = {
         uri,
-        line: comment.line,
-        fix: comment.fix,
+        line: finding.line,
+        fix: finding.fix,
         thread,
-      });
+        findingId: finding.id,
+      };
+
+      this.commentDataMap.set(reviewComment, commentData);
+      this.findingIdToComment.set(finding.id, reviewComment);
 
       thread.comments = [reviewComment];
       thread.canReply = false;
-      thread.label = this.getSeverityLabel(comment.severity);
+      thread.label = this.getSeverityLabel(finding.severity);
       thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
 
       threads.push(thread);
@@ -140,8 +172,13 @@ export class ReviewCommentController implements vscode.Disposable {
         throw new Error(result.error || 'Failed to apply fix');
       }
 
+      if (this.store) {
+        this.store.updateFindingStatus(data.findingId, 'apply');
+      }
+
       data.thread.dispose();
       this.removeThreadFromMap(data.uri, data.thread);
+      this.findingIdToComment.delete(data.findingId);
 
       vscode.window.showInformationMessage('Fix applied successfully');
     } catch (error) {
@@ -157,8 +194,13 @@ export class ReviewCommentController implements vscode.Disposable {
       return;
     }
 
+    if (this.store) {
+      this.store.updateFindingStatus(data.findingId, 'dismiss');
+    }
+
     data.thread.dispose();
     this.removeThreadFromMap(data.uri, data.thread);
+    this.findingIdToComment.delete(data.findingId);
   }
 
   private removeThreadFromMap(uri: vscode.Uri, thread: vscode.CommentThread) {
@@ -193,10 +235,15 @@ export class ReviewCommentController implements vscode.Disposable {
       }
     }
     this.threads.clear();
+    this.findingIdToComment.clear();
   }
 
   dispose() {
     this.clearAllComments();
     this.controller.dispose();
+    if (this.store) {
+      this.store.off('finding-updated', this.onFindingUpdated.bind(this));
+      this.store.off('session-cleared', this.onSessionCleared.bind(this));
+    }
   }
 }

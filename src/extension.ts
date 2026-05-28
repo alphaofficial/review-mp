@@ -66,7 +66,7 @@ export function activate(context: vscode.ExtensionContext) {
     extraArgs: settings.extraArgs ? settings.extraArgs.split(' ').filter(Boolean) : undefined,
   };
 
-  commentController = new ReviewCommentController(context);
+  commentController = new ReviewCommentController(context, undefined, undefined, store);
   orchestrator = new ReviewOrchestrator(
     () => {
       const currentSettings = getSettings();
