@@ -230,6 +230,22 @@ export class ReviewSessionStore extends EventEmitter {
     return reviewFile?.findings || [];
   }
 
+  setFileFailed(filePath: string): boolean {
+    if (!this.activeSession) {
+      return false;
+    }
+    const reviewFile = this.activeSession.files.get(filePath);
+    if (!reviewFile) {
+      return false;
+    }
+    if (reviewFile.status === 'failed') {
+      return true;
+    }
+    reviewFile.status = 'failed';
+    this.emit('file-status-changed', { sessionId: this.activeSession.id, filePath, status: 'failed' });
+    return true;
+  }
+
   getPendingFindingsCount(): number {
     if (!this.activeSession) {
       return 0;

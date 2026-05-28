@@ -518,5 +518,55 @@ describe('ReviewTreeProvider', () => {
       expect(fileMap.get('/src/pending.ts')?.icon).toBe('$(check)');
       expect(fileMap.get('/src/reviewing.ts')?.icon).toBe('$(eye)');
     });
+
+    it('should show correct icon for failed file status', () => {
+      store.createSession('file');
+      store.addFinding('/src/failed.ts', 1, 'Error', 'error');
+      store.setFileFailed('/src/failed.ts');
+
+      const items = filesProvider.getChildren() as TreeElement[];
+      const fileMap = new Map(items.map(i => [i.file?.path, i]));
+
+      expect(fileMap.get('/src/failed.ts')?.icon).toBe('$(error)');
+    });
+
+    it('should have vscode.open command with correct file path', () => {
+      store.createSession('file');
+      store.addFinding('/src/test.ts', 1, 'Error', 'error');
+
+      const items = filesProvider.getChildren() as TreeElement[];
+      const fileItem = items[0];
+
+      expect(fileItem.command?.command).toBe('vscode.open');
+      expect(fileItem.command?.arguments).toEqual([expect.objectContaining({ fsPath: '/src/test.ts' })]);
+    });
+
+    it('should update file status icons when finding is applied', () => {
+      store.createSession('file');
+      store.addFinding('/src/test.ts', 1, 'Error', 'error');
+
+      let items = filesProvider.getChildren() as TreeElement[];
+      expect(items[0].icon).toBe('$(eye)');
+
+      store.updateFindingStatus(store.getFindingsForFile('/src/test.ts')[0].id, 'apply');
+
+      items = filesProvider.getChildren() as TreeElement[];
+      expect(items[0].icon).toBe('$(check)');
+    });
+
+    it('should update file status icons when all findings are dismissed', () => {
+      store.createSession('file');
+      store.addFinding('/src/test.ts', 1, 'Error', 'error');
+      store.addFinding('/src/test.ts', 2, 'Warning', 'warning');
+
+      let items = filesProvider.getChildren() as TreeElement[];
+      expect(items[0].icon).toBe('$(eye)');
+
+      store.updateFindingStatus(store.getFindingsForFile('/src/test.ts')[0].id, 'dismiss');
+      store.updateFindingStatus(store.getFindingsForFile('/src/test.ts')[1].id, 'dismiss');
+
+      items = filesProvider.getChildren() as TreeElement[];
+      expect(items[0].icon).toBe('$(check)');
+    });
   });
 });

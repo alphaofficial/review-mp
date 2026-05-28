@@ -284,6 +284,53 @@ describe('ReviewSessionStore', () => {
     });
   });
 
+  describe('setFileFailed', () => {
+    it('should set file status to failed', () => {
+      store.createSession('file');
+      store.addFinding('/test/file.ts', 1, 'Error', 'error');
+
+      const result = store.setFileFailed('/test/file.ts');
+
+      expect(result).toBe(true);
+      expect(store.getFilesForSession()[0].status).toBe('failed');
+    });
+
+    it('should emit file-status-changed event', () => {
+      store.createSession('file');
+      store.addFinding('/test/file.ts', 1, 'Error', 'error');
+      const listener = vi.fn();
+      store.on('file-status-changed', listener);
+
+      store.setFileFailed('/test/file.ts');
+
+      expect(listener).toHaveBeenCalledWith({
+        sessionId: expect.any(String),
+        filePath: '/test/file.ts',
+        status: 'failed',
+      });
+    });
+
+    it('should return false if no active session', () => {
+      const result = store.setFileFailed('/test/file.ts');
+      expect(result).toBe(false);
+    });
+
+    it('should return false if file does not exist', () => {
+      store.createSession('file');
+      const result = store.setFileFailed('/nonexistent/file.ts');
+      expect(result).toBe(false);
+    });
+
+    it('should return true if file is already failed', () => {
+      store.createSession('file');
+      store.addFinding('/test/file.ts', 1, 'Error', 'error');
+      store.setFileFailed('/test/file.ts');
+
+      const result = store.setFileFailed('/test/file.ts');
+      expect(result).toBe(true);
+    });
+  });
+
   describe('getFilesForSession', () => {
     it('should return empty array when no session', () => {
       expect(store.getFilesForSession()).toEqual([]);
