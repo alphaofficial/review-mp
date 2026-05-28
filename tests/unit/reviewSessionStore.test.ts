@@ -1,4 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+vi.mock('../../src/settings', () => ({
+  logDebug: vi.fn(),
+}));
+
 import { ReviewSessionStore, createReviewSessionStore, resetReviewSessionStore } from '../../src/store/reviewSessionStore';
 import { ReviewFinding, ReviewFile, ReviewHistoryEntry, ReviewSession, ReviewStatus, ReviewType } from '../../src/types/review';
 
