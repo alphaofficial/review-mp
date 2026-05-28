@@ -446,7 +446,7 @@ describe('builtInRuntimes', () => {
     expect(claudeManifest?.promptTransport).toBe('stdin');
     expect(claudeManifest?.prePromptArgs).toEqual(['-p']);
     expect(codexManifest?.promptTransport).toBe('stdin');
-    expect(codexManifest?.prePromptArgs).toEqual(['exec', '--skip-git-repo-check']);
+    expect(codexManifest?.prePromptArgs).toEqual(['exec', '--skip-git-repo-check', '--ignore-rules']);
     expect(opencodeManifest?.prePromptArgs).toEqual(['run', '--pure', '--dangerously-skip-permissions']);
     expect(opencodeManifest?.workingDirectoryArgFlag).toBe('--dir');
   });

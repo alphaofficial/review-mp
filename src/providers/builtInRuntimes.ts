@@ -34,7 +34,7 @@ export const builtInRuntimes: RuntimeManifest[] = [
     supportsModelOverride: true,
     supportsExecutableOverride: true,
     supportsExtraArgs: true,
-    prePromptArgs: ['exec', '--skip-git-repo-check'],
+    prePromptArgs: ['exec', '--skip-git-repo-check', '--ignore-rules'],
     modelArgFlag: '--model',
   },
   {
