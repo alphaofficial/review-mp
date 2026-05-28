@@ -81,7 +81,301 @@ vi.mock('vscode', () => {
 });
 
 import { ReviewCommentController } from '../../src/comments';
-import { ReviewComment } from '../../src/types/review';
+import { ReviewOrchestrator } from '../../src/reviewOrchestrator';
+import { ReviewSessionStore, createReviewSessionStore, resetReviewSessionStore } from '../../src/store/reviewSessionStore';
+import { ReviewComment, ReviewStatus } from '../../src/types/review';
+
+describe('ReviewOrchestrator', () => {
+  let orchestrator: ReviewOrchestrator;
+  let mockContext: any;
+  let controller: ReviewCommentController;
+  let mockController: any;
+  let store: ReviewSessionStore;
+  let mockGetProvider: () => any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetReviewSessionStore();
+    store = createReviewSessionStore();
+
+    mockController = {
+      createCommentThread: vi.fn().mockReturnValue({
+        comments: [],
+        canReply: false,
+        label: '',
+        collapsibleState: 2,
+        dispose: vi.fn(),
+      }),
+      dispose: vi.fn(),
+      commentingRangeProvider: undefined,
+    };
+
+    (vscode.comments.createCommentController as any).mockReturnValue(mockController);
+
+    mockContext = {
+      subscriptions: [] as any[],
+      workspaceState: {
+        get: vi.fn(),
+        update: vi.fn(),
+      },
+    };
+
+    controller = new ReviewCommentController(mockContext);
+
+    mockGetProvider = vi.fn().mockReturnValue({
+      review: vi.fn().mockResolvedValue({ comments: [] }),
+    });
+
+    orchestrator = new ReviewOrchestrator(mockGetProvider, controller, store);
+  });
+
+  describe('store integration', () => {
+    it('should create session and update status through store', async () => {
+      const statusChanges: ReviewStatus[] = [];
+      store.on('status-changed', (data: { status: ReviewStatus }) => {
+        statusChanges.push(data.status);
+      });
+
+      const mockDoc = {
+        getText: () => 'const x = 1;',
+        languageId: 'typescript',
+        uri: { fsPath: '/test/file.ts' },
+      } as any;
+
+      (mockGetProvider() as any).review.mockResolvedValueOnce({
+        comments: [{ file: '/test/file.ts', line: 1, message: 'Error' }],
+      });
+
+      await orchestrator.reviewFile(mockDoc);
+
+      expect(store.getActiveSession()).not.toBeNull();
+      expect(statusChanges).toContain('settingUp');
+      expect(statusChanges).toContain('analyzing');
+      expect(statusChanges).toContain('reviewing');
+      expect(statusChanges).toContain('completed');
+    });
+
+    it('should publish findings to store', async () => {
+      const findingsAdded: any[] = [];
+      store.on('finding-added', (data: any) => {
+        findingsAdded.push(data.finding);
+      });
+
+      const mockDoc = {
+        getText: () => 'const x = 1;',
+        languageId: 'typescript',
+        uri: { fsPath: '/test/file.ts' },
+      } as any;
+
+      (mockGetProvider() as any).review.mockResolvedValueOnce({
+        comments: [
+          { file: '/test/file.ts', line: 1, message: 'Error 1', severity: 'error' },
+          { file: '/test/file.ts', line: 5, message: 'Error 2', severity: 'warning' },
+        ],
+      });
+
+      await orchestrator.reviewFile(mockDoc);
+
+      expect(findingsAdded).toHaveLength(2);
+      expect(findingsAdded[0].message).toBe('Error 1');
+      expect(findingsAdded[1].message).toBe('Error 2');
+    });
+
+    it('should add findings from comments with correct severity', async () => {
+      const mockDoc = {
+        getText: () => 'const x = 1;',
+        languageId: 'typescript',
+        uri: { fsPath: '/test/file.ts' },
+      } as any;
+
+      (mockGetProvider() as any).review.mockResolvedValueOnce({
+        comments: [
+          { file: '/test/file.ts', line: 1, message: 'Error', severity: 'error' },
+          { file: '/test/file.ts', line: 2, message: 'Warning', severity: 'warning' },
+          { file: '/test/file.ts', line: 3, message: 'Info', severity: 'info' },
+          { file: '/test/file.ts', line: 4, message: 'Suggestion', severity: 'suggestion' },
+        ],
+      });
+
+      await orchestrator.reviewFile(mockDoc);
+
+      const session = store.getActiveSession();
+      expect(session?.findings[0].severity).toBe('error');
+      expect(session?.findings[1].severity).toBe('warning');
+      expect(session?.findings[2].severity).toBe('info');
+      expect(session?.findings[3].severity).toBe('suggestion');
+    });
+
+    it('should add findings with fix when provided', async () => {
+      const mockDoc = {
+        getText: () => 'const x = 1;',
+        languageId: 'typescript',
+        uri: { fsPath: '/test/file.ts' },
+      } as any;
+
+      (mockGetProvider() as any).review.mockResolvedValueOnce({
+        comments: [
+          { file: '/test/file.ts', line: 1, message: 'Error', fix: 'const y = 2;' },
+        ],
+      });
+
+      await orchestrator.reviewFile(mockDoc);
+
+      const session = store.getActiveSession();
+      expect(session?.findings[0].fix).toBe('const y = 2;');
+    });
+
+    it('should mark session as failed on error', async () => {
+      const statusChanges: ReviewStatus[] = [];
+      store.on('status-changed', (data: { status: ReviewStatus }) => {
+        statusChanges.push(data.status);
+      });
+
+      const mockDoc = {
+        getText: () => 'const x = 1;',
+        languageId: 'typescript',
+        uri: { fsPath: '/test/file.ts' },
+      } as any;
+
+      (mockGetProvider() as any).review.mockRejectedValueOnce(new Error('Provider error'));
+
+      await orchestrator.reviewFile(mockDoc);
+
+      expect(store.getActiveSession()?.status).toBe('failed');
+      expect(store.getActiveSession()?.error).toBe('Provider error');
+    });
+
+    it('should clear active session on cancellation', async () => {
+      const mockDoc = {
+        getText: () => 'const x = 1;',
+        languageId: 'typescript',
+        uri: { fsPath: '/test/file.ts' },
+      } as any;
+
+      (vscode.window.withProgress as any).mockImplementationOnce(async (options: any, callback: Function) => {
+        return callback({ report: vi.fn() }, { isCancellationRequested: true });
+      });
+
+      await orchestrator.reviewFile(mockDoc);
+
+      expect(store.getActiveSession()).toBeNull();
+    });
+  });
+
+  describe('progress states', () => {
+    it('should transition through idle -> settingUp -> analyzing -> reviewing -> completed', async () => {
+      const statusChanges: ReviewStatus[] = [];
+      store.on('status-changed', (data: { status: ReviewStatus }) => {
+        statusChanges.push(data.status);
+      });
+
+      const mockDoc = {
+        getText: () => 'const x = 1;',
+        languageId: 'typescript',
+        uri: { fsPath: '/test/file.ts' },
+      } as any;
+
+      (mockGetProvider() as any).review.mockResolvedValueOnce({
+        comments: [{ file: '/test/file.ts', line: 1, message: 'Error' }],
+      });
+
+      await orchestrator.reviewFile(mockDoc);
+
+      expect(statusChanges).toEqual(['settingUp', 'analyzing', 'reviewing', 'completed']);
+    });
+
+    it('should set session to failed when error occurs', async () => {
+      const mockDoc = {
+        getText: () => 'const x = 1;',
+        languageId: 'typescript',
+        uri: { fsPath: '/test/file.ts' },
+      } as any;
+
+      (mockGetProvider() as any).review.mockRejectedValueOnce(new Error('Test error'));
+
+      await orchestrator.reviewFile(mockDoc);
+
+      expect(store.getActiveSession()?.status).toBe('failed');
+    });
+
+    it('should set error message on session when provider fails', async () => {
+      const mockDoc = {
+        getText: () => 'const x = 1;',
+        languageId: 'typescript',
+        uri: { fsPath: '/test/file.ts' },
+      } as any;
+
+      (mockGetProvider() as any).review.mockRejectedValueOnce(new Error('Provider failed'));
+
+      await orchestrator.reviewFile(mockDoc);
+
+      expect(store.getActiveSession()?.error).toBe('Provider failed');
+    });
+  });
+
+  describe('empty result handling', () => {
+    it('should complete session without findings when no issues found', async () => {
+      const mockDoc = {
+        getText: () => 'const x = 1;',
+        languageId: 'typescript',
+        uri: { fsPath: '/test/file.ts' },
+      } as any;
+
+      (mockGetProvider() as any).review.mockResolvedValueOnce({ comments: [] });
+
+      await orchestrator.reviewFile(mockDoc);
+
+      expect(store.getActiveSession()?.status).toBe('completed');
+      expect(store.getActiveSession()?.findings).toHaveLength(0);
+    });
+
+    it('should show info message when no issues found', async () => {
+      const mockDoc = {
+        getText: () => 'const x = 1;',
+        languageId: 'typescript',
+        uri: { fsPath: '/test/file.ts' },
+      } as any;
+
+      (mockGetProvider() as any).review.mockResolvedValueOnce({ comments: [] });
+
+      await orchestrator.reviewFile(mockDoc);
+
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('No issues found in the code');
+    });
+  });
+
+  describe('clearActiveReview', () => {
+    it('should clear both store session and comments', async () => {
+      const mockDoc = {
+        getText: () => 'const x = 1;',
+        languageId: 'typescript',
+        uri: { fsPath: '/test/file.ts' },
+      } as any;
+
+      (mockGetProvider() as any).review.mockResolvedValueOnce({
+        comments: [{ file: '/test/file.ts', line: 1, message: 'Error' }],
+      });
+
+      await orchestrator.reviewFile(mockDoc);
+      expect(store.getActiveSession()).not.toBeNull();
+
+      orchestrator.clearActiveReview();
+
+      expect(store.getActiveSession()).toBeNull();
+    });
+  });
+
+  describe('reviewGitChanges', () => {
+    it('should create session for git-based review type', () => {
+      const session = store.createSession('staged');
+      expect(session.reviewType).toBe('staged');
+
+      const branchSession = store.createSession('branch', 'Branch Review', 'feature-branch');
+      expect(branchSession.reviewType).toBe('branch');
+      expect(branchSession.branch).toBe('feature-branch');
+    });
+  });
+});
 
 describe('ReviewCommentController', () => {
   let mockContext: any;
