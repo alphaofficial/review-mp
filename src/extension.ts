@@ -209,7 +209,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   const openFindingCommand = vscode.commands.registerCommand(
     'reviewmp.openFinding',
-    async (findingId: string) => {
+    async (arg: string | { finding?: { id: string; line: number; message: string }; file?: { path: string } }, ...args: any[]) => {
       const session = store.getActiveSession();
       if (!session) {
         vscode.window.showWarningMessage('No active review');
@@ -217,26 +217,36 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       let finding = null;
-      for (const file of session.files.values()) {
-        const found = file.findings.find(f => f.id === findingId);
-        if (found) {
-          finding = found;
-          const uri = vscode.Uri.file(file.path);
-          const document = await vscode.workspace.openTextDocument(uri);
-          await vscode.window.showTextDocument(document, { preserveFocus: false });
-          const editor = vscode.window.activeTextEditor;
-          if (editor) {
-            const line = Math.max(0, finding.line - 1);
-            const range = new vscode.Range(line, 0, line, 0);
-            editor.selection = new vscode.Selection(range.start, range.end);
-            editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+      let targetFilePath: string | undefined;
+
+      if (typeof arg === 'string') {
+        for (const file of session.files.values()) {
+          const found = file.findings.find(f => f.id === arg);
+          if (found) {
+            finding = found;
+            targetFilePath = file.path;
+            break;
           }
-          break;
         }
+      } else if (arg && typeof arg === 'object' && arg.finding) {
+        finding = arg.finding;
+        targetFilePath = arg.file?.path;
       }
 
-      if (!finding) {
+      if (!finding || !targetFilePath) {
         vscode.window.showWarningMessage('Finding not found');
+        return;
+      }
+
+      const uri = vscode.Uri.file(targetFilePath);
+      const document = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(document, { preserveFocus: false });
+      const editor = vscode.window.activeTextEditor;
+      if (editor) {
+        const line = Math.max(0, finding.line - 1);
+        const range = new vscode.Range(line, 0, line, 0);
+        editor.selection = new vscode.Selection(range.start, range.end);
+        editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
       }
     }
   );
@@ -245,15 +255,26 @@ export function activate(context: vscode.ExtensionContext) {
 
   const applyFindingFixCommand = vscode.commands.registerCommand(
     'reviewmp.applyFindingFix',
-    async (findingId: string) => {
+    async (arg: string | { finding?: { id: string; fix?: string; line: number; message: string }; file?: { path: string } }, ...args: any[]) => {
       const session = store.getActiveSession();
       if (!session) {
         vscode.window.showWarningMessage('No active review');
         return;
       }
 
+      let findingId: string;
       let finding = null;
       let filePath: string | undefined;
+
+      if (typeof arg === 'string') {
+        findingId = arg;
+      } else if (arg && typeof arg === 'object' && arg.finding) {
+        findingId = arg.finding.id;
+      } else {
+        vscode.window.showWarningMessage('Finding not found');
+        return;
+      }
+
       for (const file of session.files.values()) {
         const found = file.findings.find(f => f.id === findingId);
         if (found) {
@@ -289,7 +310,30 @@ export function activate(context: vscode.ExtensionContext) {
 
   const dismissFindingCommand = vscode.commands.registerCommand(
     'reviewmp.dismissFinding',
-    async (findingId: string) => {
+    async (arg: string | { finding?: { id: string } }, ...args: any[]) => {
+      const session = store.getActiveSession();
+      if (!session) {
+        vscode.window.showWarningMessage('No active review');
+        return;
+      }
+
+      let findingId: string;
+
+      if (typeof arg === 'string') {
+        findingId = arg;
+      } else if (arg && typeof arg === 'object' && arg.finding) {
+        findingId = arg.finding.id;
+      } else {
+        vscode.window.showWarningMessage('Finding not found');
+        return;
+      }
+
+      const finding = store.getFinding(findingId);
+      if (!finding) {
+        vscode.window.showWarningMessage('Finding not found in active review');
+        return;
+      }
+
       store.updateFindingStatus(findingId, 'dismiss');
     }
   );
