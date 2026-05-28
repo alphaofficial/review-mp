@@ -42,7 +42,6 @@ class RuntimeProviderAdapter implements ModelProvider {
 }
 
 let commentController: ReviewCommentController;
-let provider: ModelProvider;
 let orchestrator: ReviewOrchestrator;
 let gitWatcher: GitWatcher | undefined;
 
@@ -62,9 +61,23 @@ export function activate(context: vscode.ExtensionContext) {
     extraArgs: settings.extraArgs ? settings.extraArgs.split(' ').filter(Boolean) : undefined,
   };
 
-  provider = new RuntimeProviderAdapter(settings.runtime, runtimeSettings, workspaceRoot);
-  commentController = new ReviewCommentController(context, provider);
-  orchestrator = new ReviewOrchestrator(provider, commentController);
+  commentController = new ReviewCommentController(context);
+  orchestrator = new ReviewOrchestrator(
+    () => {
+      const currentSettings = getSettings();
+      const currentRuntimeSettings: RuntimeSettings = {
+        runtime: currentSettings.runtime,
+        model: currentSettings.model,
+        debug: currentSettings.debug,
+        autoReviewOnStage: currentSettings.autoReviewOnStage,
+        autoReviewOnCommit: currentSettings.autoReviewOnCommit,
+        executableOverride: currentSettings.executableOverride || undefined,
+        extraArgs: currentSettings.extraArgs ? currentSettings.extraArgs.split(' ').filter(Boolean) : undefined,
+      };
+      return new RuntimeProviderAdapter(currentSettings.runtime, currentRuntimeSettings, workspaceRoot);
+    },
+    commentController
+  );
 
   if (gitWatcher) {
     gitWatcher.dispose();

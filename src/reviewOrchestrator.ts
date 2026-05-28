@@ -7,12 +7,12 @@ import { clusterDiff, parseDiffIntoFiles } from './harness/diffClustering';
 import { buildCrossFilePrompt, checkCrossFileConsistency, CrossFileConsistencyResult } from './harness/crossFileConsistencyPass';
 
 export class ReviewOrchestrator implements vscode.Disposable {
-  private provider: ModelProvider;
+  private getProvider: () => ModelProvider;
   private commentController: ReviewCommentController;
   private diffCollector: DiffContextCollector;
 
-  constructor(provider: ModelProvider, commentController: ReviewCommentController) {
-    this.provider = provider;
+  constructor(getProvider: () => ModelProvider, commentController: ReviewCommentController) {
+    this.getProvider = getProvider;
     this.commentController = commentController;
     this.diffCollector = new DiffContextCollector();
   }
@@ -79,7 +79,7 @@ export class ReviewOrchestrator implements vscode.Disposable {
       },
       async (progress, token) => {
         try {
-          const result = await this.provider.review(request, token);
+          const result = await this.getProvider().review(request, token);
 
           if (token.isCancellationRequested) {
             return;
@@ -142,7 +142,7 @@ export class ReviewOrchestrator implements vscode.Disposable {
               diff: diffResult.formattedDiff,
             };
 
-            const result = await this.provider.review(request, token);
+          const result = await this.getProvider().review(request, token);
 
             if (token.isCancellationRequested) {
               return;
@@ -188,7 +188,7 @@ export class ReviewOrchestrator implements vscode.Disposable {
         diff: formattedDiff,
       };
 
-      const result = await this.provider.review(request, token);
+      const result = await this.getProvider().review(request, token);
 
       if (token?.isCancellationRequested) {
         return;
@@ -228,7 +228,7 @@ export class ReviewOrchestrator implements vscode.Disposable {
             diff: clusterDiffContent,
           };
 
-          return this.provider.review(request, token);
+          return this.getProvider().review(request, token);
         });
 
         const batchResults = await Promise.all(batchPromises);
@@ -267,7 +267,7 @@ export class ReviewOrchestrator implements vscode.Disposable {
     let crossFileResult: CrossFileConsistencyResult = { comments: [], issuesFound: 0 };
 
     try {
-      const crossFileReviewResult = await this.provider.review(crossFileRequest, token);
+      const crossFileReviewResult = await this.getProvider().review(crossFileRequest, token);
 
       if (token?.isCancellationRequested) {
         return;

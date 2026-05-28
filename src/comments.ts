@@ -24,8 +24,8 @@ export class ReviewCommentController implements vscode.Disposable {
   private provider: ModelProvider;
   private fixApplicator: FixApplicator;
 
-  constructor(context: vscode.ExtensionContext, provider: ModelProvider, fixApplicator?: FixApplicator) {
-    this.provider = provider;
+  constructor(context: vscode.ExtensionContext, provider?: ModelProvider, fixApplicator?: FixApplicator) {
+    this.provider = provider!;
     this.fixApplicator = fixApplicator || createFixApplicator();
     this.controller = vscode.comments.createCommentController(
       'reviewmp',
