@@ -135,7 +135,7 @@ ReviewMP: Select Runtime
 | `ReviewMP: Review Pull Request` | Review PR with clustered passes |
 | `ReviewMP: Clear All Comments` | Remove all review comments |
 | `ReviewMP: Select Runtime` | Choose AI runtime |
-| `ReviewMP: Toggle Debug Mode` | Enable/disable debug logging |
+| `ReviewMP: Show Debug Logs` | Open the ReviewMP output channel |
 
 ## Configuration
 
@@ -151,8 +151,7 @@ Example `settings.json`:
   "reviewmp.runtime": "claude",
   "reviewmp.model": "claude-sonnet-4-20250514",
   "reviewmp.autoReviewOnStage": true,
-  "reviewmp.autoReviewOnCommit": false,
-  "reviewmp.debug": false
+  "reviewmp.autoReviewOnCommit": false
 }
 ```
 
@@ -164,7 +163,6 @@ Example `settings.json`:
 | `reviewmp.model` | (empty) | Model override. Leave empty for runtime default. |
 | `reviewmp.autoReviewOnStage` | `false` | Automatically review when files are staged |
 | `reviewmp.autoReviewOnCommit` | `false` | Prompt to review before commit |
-| `reviewmp.debug` | `false` | Enable debug logging |
 
 ### Runtime-Specific Settings
 

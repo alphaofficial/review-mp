@@ -85,6 +85,16 @@ import { ReviewOrchestrator } from '../../src/reviewOrchestrator';
 import { ReviewSessionStore, createReviewSessionStore, resetReviewSessionStore } from '../../src/store/reviewSessionStore';
 import { ReviewComment, ReviewStatus } from '../../src/types/review';
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('ReviewOrchestrator', () => {
   let orchestrator: ReviewOrchestrator;
   let mockContext: any;
@@ -124,6 +134,8 @@ describe('ReviewOrchestrator', () => {
 
     mockGetProvider = vi.fn().mockReturnValue({
       review: vi.fn().mockResolvedValue({ comments: [] }),
+      cancel: vi.fn(),
+      isAvailable: vi.fn().mockResolvedValue(true),
     });
 
     orchestrator = new ReviewOrchestrator(mockGetProvider, controller, store);
@@ -362,6 +374,70 @@ describe('ReviewOrchestrator', () => {
       orchestrator.clearActiveReview();
 
       expect(store.getActiveSession()).toBeNull();
+    });
+
+    it('should cancel in-flight providers before clearing the session', async () => {
+      const deferred = createDeferred<{ comments: never[] }>();
+      const provider = {
+        review: vi.fn().mockReturnValue(deferred.promise),
+        cancel: vi.fn(() => deferred.reject(new Error('Review cancelled'))),
+        isAvailable: vi.fn().mockResolvedValue(true),
+      };
+      mockGetProvider = vi.fn().mockReturnValue(provider);
+      orchestrator = new ReviewOrchestrator(mockGetProvider, controller, store);
+
+      const mockDoc = {
+        getText: () => 'const x = 1;',
+        languageId: 'typescript',
+        uri: { fsPath: '/test/file.ts' },
+      } as any;
+
+      const reviewPromise = orchestrator.reviewFile(mockDoc);
+      await Promise.resolve();
+
+      orchestrator.clearActiveReview();
+      await reviewPromise;
+
+      expect(provider.cancel).toHaveBeenCalledTimes(1);
+      expect(store.getActiveSession()).toBeNull();
+      expect(vscode.window.showErrorMessage).not.toHaveBeenCalledWith('ReviewMP Error: Review cancelled');
+    });
+
+    it('should cancel stale providers before starting a new review', async () => {
+      const firstDeferred = createDeferred<{ comments: never[] }>();
+      const firstProvider = {
+        review: vi.fn().mockReturnValue(firstDeferred.promise),
+        cancel: vi.fn(() => firstDeferred.reject(new Error('Review cancelled'))),
+        isAvailable: vi.fn().mockResolvedValue(true),
+      };
+      const secondProvider = {
+        review: vi.fn().mockResolvedValue({ comments: [] }),
+        cancel: vi.fn(),
+        isAvailable: vi.fn().mockResolvedValue(true),
+      };
+
+      mockGetProvider = vi
+        .fn()
+        .mockReturnValueOnce(firstProvider)
+        .mockReturnValueOnce(secondProvider);
+      orchestrator = new ReviewOrchestrator(mockGetProvider, controller, store);
+
+      const mockDoc = {
+        getText: () => 'const x = 1;',
+        languageId: 'typescript',
+        uri: { fsPath: '/test/file.ts' },
+      } as any;
+
+      const firstReviewPromise = orchestrator.reviewFile(mockDoc);
+      await Promise.resolve();
+
+      await orchestrator.reviewFile(mockDoc);
+      await firstReviewPromise;
+
+      expect(firstProvider.cancel).toHaveBeenCalledTimes(1);
+      expect(secondProvider.review).toHaveBeenCalledTimes(1);
+      expect(store.getActiveSession()?.status).toBe('completed');
+      expect(vscode.window.showErrorMessage).not.toHaveBeenCalledWith('ReviewMP Error: Review cancelled');
     });
   });
 

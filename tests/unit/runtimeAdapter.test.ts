@@ -31,7 +31,7 @@ const createOpencodeManifest = (): RuntimeManifest => ({
   name: 'OpenCode',
   executable: 'opencode',
   promptTransport: 'argv',
-  outputFormat: 'ndjson',
+  outputFormat: 'text',
   supportsModelOverride: true,
   supportsExecutableOverride: true,
   supportsExtraArgs: true,
@@ -339,9 +339,10 @@ describe('CliRuntimeAdapter process execution', () => {
         ...createOpencodeManifest(),
         prePromptArgs: ['run', '--format', 'json'],
         modelArgFlag: '--model',
+        workingDirectoryArgFlag: '--dir',
       };
       const settings = createSettings({ model: 'claude-3-5-sonnet', extraArgs: ['--verbose'] });
-      const adapter = new CliRuntimeAdapter(manifest, settings);
+      const adapter = new CliRuntimeAdapter(manifest, settings, '/test/workspace');
 
       const request = {
         code: 'const x = 1;',
@@ -358,8 +359,36 @@ describe('CliRuntimeAdapter process execution', () => {
       expect(argv[2]).toBe('json');
       expect(argv[3]).toBe('--model');
       expect(argv[4]).toBe('claude-3-5-sonnet');
-      expect(argv[5]).toBe('--verbose');
-      expect(argv[6]).toBeDefined();
+      expect(argv[5]).toBe('--dir');
+      expect(argv[6]).toBe('/test/workspace');
+      expect(argv[7]).toBe('--verbose');
+      expect(argv[8]).toBeDefined();
+    });
+
+    it('includes explicit working directory args when supported by the runtime', async () => {
+      const mockProc = createMockProcess();
+      mockSpawn.mockReturnValue(mockProc);
+
+      const manifest: RuntimeManifest = {
+        ...createOpencodeManifest(),
+        prePromptArgs: ['run', '--pure', '--dangerously-skip-permissions'],
+        workingDirectoryArgFlag: '--dir',
+      };
+      const settings = createSettings();
+      const adapter = new CliRuntimeAdapter(manifest, settings, '/test/workspace');
+
+      const request = {
+        code: 'const x = 1;',
+        languageId: 'typescript',
+        filePath: 'test.ts',
+        reviewType: 'file' as const,
+      };
+
+      await adapter.invoke(request);
+
+      const argv = getSpawnArgv();
+      expect(argv).toContain('--dir');
+      expect(argv).toContain('/test/workspace');
     });
 
     it('uses executable override when provided', async () => {
@@ -409,6 +438,26 @@ describe('CliRuntimeAdapter process execution', () => {
       expect(result.comments[0].message).toBe('Test issue');
       expect(result.comments[0].severity).toBe('warning');
       expect(result.metadata?.runtimeId).toBe('opencode');
+    });
+
+    it('clears the current process reference after the runtime exits', async () => {
+      const mockProc = createMockProcess('[{"line": 1, "message": "Test issue"}]');
+      mockSpawn.mockReturnValue(mockProc);
+
+      const manifest = createOpencodeManifest();
+      const settings = createSettings();
+      const adapter = new CliRuntimeAdapter(manifest, settings);
+
+      const request = {
+        code: 'const x = 1;',
+        languageId: 'typescript',
+        filePath: 'test.ts',
+        reviewType: 'file' as const,
+      };
+
+      await adapter.invoke(request);
+
+      expect((adapter as any).currentProcess).toBeNull();
     });
 
     it('handles diff review type', async () => {
@@ -464,6 +513,44 @@ describe('CliRuntimeAdapter process execution', () => {
           stdio: ['pipe', 'pipe', 'pipe'],
         })
       );
+    });
+
+    it('includes prePromptArgs, model arg, and extra args for stdin transports', async () => {
+      const manifest: RuntimeManifest = {
+        ...createOpencodeManifest(),
+        executable: 'codex',
+        promptTransport: 'stdin',
+        prePromptArgs: ['exec', '--skip-git-repo-check'],
+        modelArgFlag: '--model',
+      };
+      const mockProc = createMockProcess();
+      mockSpawn.mockReturnValue(mockProc);
+
+      const settings = createSettings({
+        model: 'gpt-5',
+        extraArgs: ['--sandbox', 'read-only'],
+      });
+      const adapter = new CliRuntimeAdapter(manifest, settings);
+
+      const request = {
+        code: 'const x = 1;',
+        languageId: 'typescript',
+        filePath: 'test.ts',
+        reviewType: 'file' as const,
+      };
+
+      await adapter.invoke(request);
+
+      const spawnArgs = getSpawnArgv();
+      expect(spawnArgs).toEqual([
+        'exec',
+        '--skip-git-repo-check',
+        '--model',
+        'gpt-5',
+        '--sandbox',
+        'read-only',
+      ]);
+      expect(mockProc.stdin.write).toHaveBeenCalled();
     });
   });
 

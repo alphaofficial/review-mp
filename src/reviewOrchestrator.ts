@@ -6,12 +6,16 @@ import { DiffContextCollector } from './harness/diffContextCollector';
 import { clusterDiff, parseDiffIntoFiles } from './harness/diffClustering';
 import { buildCrossFilePrompt, checkCrossFileConsistency, CrossFileConsistencyResult } from './harness/crossFileConsistencyPass';
 import { ReviewSessionStore } from './store/reviewSessionStore';
+import { logDebug } from './settings';
 
 export class ReviewOrchestrator implements vscode.Disposable {
   private getProvider: () => ModelProvider;
   private commentController: ReviewCommentController;
   private diffCollector: DiffContextCollector;
   private store: ReviewSessionStore;
+  private activeProviders = new Set<ModelProvider>();
+  private runSequence = 0;
+  private activeRunId = 0;
 
   constructor(getProvider: () => ModelProvider, commentController: ReviewCommentController, store: ReviewSessionStore) {
     this.getProvider = getProvider;
@@ -72,6 +76,8 @@ export class ReviewOrchestrator implements vscode.Disposable {
   }
 
   clearActiveReview(): void {
+    this.activeRunId = ++this.runSequence;
+    this.cancelActiveProviders('clearActiveReview');
     this.store.clearActiveSession();
     this.commentController.clearAllComments();
   }
@@ -79,11 +85,20 @@ export class ReviewOrchestrator implements vscode.Disposable {
   private async reviewCode(request: ReviewRequest): Promise<void> {
     const typeLabel = 'code';
     const startLine = request.startLine ?? 0;
+    const runId = this.beginRun();
 
     const session = this.store.createSession(request.reviewType, undefined, undefined, undefined);
     if (request.filePath) {
       this.store.setFilesToReview([request.filePath]);
     }
+    logDebug('Created code review session', {
+      sessionId: session.id,
+      reviewType: request.reviewType,
+      filePath: request.filePath,
+      languageId: request.languageId,
+      startLine,
+      codeLength: request.code.length,
+    });
     this.store.updateSessionStatus('settingUp');
 
     await vscode.window.withProgress(
@@ -95,7 +110,24 @@ export class ReviewOrchestrator implements vscode.Disposable {
       async (progress, token) => {
         try {
           this.store.updateSessionStatus('analyzing');
-          const result = await this.getProvider().review(request, token);
+          logDebug('Invoking provider for code review', {
+            sessionId: session.id,
+            reviewType: request.reviewType,
+            filePath: request.filePath,
+          });
+          const result = await this.invokeProvider(request, token);
+          if (!this.isRunCurrent(runId, session.id)) {
+            logDebug('Ignoring stale code review result', {
+              sessionId: session.id,
+              runId,
+            });
+            return;
+          }
+          logDebug('Provider returned code review result', {
+            sessionId: session.id,
+            commentCount: result.comments.length,
+            provider: result.provider,
+          });
 
           if (token.isCancellationRequested) {
             this.store.clearActiveSession();
@@ -123,7 +155,25 @@ export class ReviewOrchestrator implements vscode.Disposable {
             `ReviewMP: Found ${result.comments.length} comment(s)`
           );
         } catch (error) {
+          if (!this.isRunCurrent(runId, session.id)) {
+            logDebug('Ignoring stale code review failure', {
+              sessionId: session.id,
+              runId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            return;
+          }
+
           if (error instanceof Error) {
+            if (this.isCancellationError(error)) {
+              this.store.clearActiveSession();
+              return;
+            }
+
+            logDebug('Code review failed', {
+              sessionId: session.id,
+              error: error.message,
+            });
             this.store.setSessionError(error.message);
             vscode.window.showErrorMessage(`ReviewMP Error: ${error.message}`);
           }
@@ -140,8 +190,13 @@ export class ReviewOrchestrator implements vscode.Disposable {
       branch: 'branch changes',
       pullRequest: 'pull request changes',
     };
+    const runId = this.beginRun();
 
     const session = this.store.createSession(type);
+    logDebug('Created diff review session', {
+      sessionId: session.id,
+      reviewType: type,
+    });
     this.store.updateSessionStatus('settingUp');
 
     await vscode.window.withProgress(
@@ -153,7 +208,17 @@ export class ReviewOrchestrator implements vscode.Disposable {
       async (progress, token) => {
         try {
           this.store.updateSessionStatus('analyzing');
+          logDebug('Collecting diff for review', {
+            sessionId: session.id,
+            reviewType: type,
+          });
           const diffResult = await this.diffCollector.getDiff(type, token);
+          logDebug('Collected diff for review', {
+            sessionId: session.id,
+            reviewType: type,
+            diffLength: diffResult.diff.length,
+            formattedDiffLength: diffResult.formattedDiff.length,
+          });
           this.store.setFilesToReview(this.getFilePathsFromDiff(diffResult.diff));
 
           if (token.isCancellationRequested) {
@@ -162,7 +227,7 @@ export class ReviewOrchestrator implements vscode.Disposable {
           }
 
           if (type === 'pullRequest') {
-            await this.reviewPullRequest(diffResult.formattedDiff, token);
+            await this.reviewPullRequest(diffResult.formattedDiff, runId, session.id, token);
           } else {
             const request: ReviewRequest = {
               code: '',
@@ -172,7 +237,21 @@ export class ReviewOrchestrator implements vscode.Disposable {
               diff: diffResult.formattedDiff,
             };
 
-            const result = await this.getProvider().review(request, token);
+            const result = await this.invokeProvider(request, token);
+            if (!this.isRunCurrent(runId, session.id)) {
+              logDebug('Ignoring stale diff review result', {
+                sessionId: session.id,
+                reviewType: type,
+                runId,
+              });
+              return;
+            }
+            logDebug('Provider returned diff review result', {
+              sessionId: session.id,
+              reviewType: type,
+              commentCount: result.comments.length,
+              provider: result.provider,
+            });
 
             if (token.isCancellationRequested) {
               this.store.clearActiveSession();
@@ -194,7 +273,27 @@ export class ReviewOrchestrator implements vscode.Disposable {
             );
           }
         } catch (error) {
+          if (!this.isRunCurrent(runId, session.id)) {
+            logDebug('Ignoring stale diff review failure', {
+              sessionId: session.id,
+              reviewType: type,
+              runId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            return;
+          }
+
           if (error instanceof Error) {
+            if (this.isCancellationError(error)) {
+              this.store.clearActiveSession();
+              return;
+            }
+
+            logDebug('Diff review failed', {
+              sessionId: session.id,
+              reviewType: type,
+              error: error.message,
+            });
             this.store.setSessionError(error.message);
             vscode.window.showErrorMessage(`ReviewMP Error: ${error.message}`);
           }
@@ -203,7 +302,12 @@ export class ReviewOrchestrator implements vscode.Disposable {
     );
   }
 
-  private async reviewPullRequest(formattedDiff: string, token?: vscode.CancellationToken): Promise<void> {
+  private async reviewPullRequest(
+    formattedDiff: string,
+    runId: number,
+    sessionId: string,
+    token?: vscode.CancellationToken
+  ): Promise<void> {
     const clusteringResult = clusterDiff({ diff: formattedDiff, formattedDiff });
     this.store.setFilesToReview(clusteringResult.clusters.flatMap(cluster => cluster.files));
 
@@ -227,7 +331,14 @@ export class ReviewOrchestrator implements vscode.Disposable {
         diff: formattedDiff,
       };
 
-      const result = await this.getProvider().review(request, token);
+      const result = await this.invokeProvider(request, token);
+      if (!this.isRunCurrent(runId, sessionId)) {
+        logDebug('Ignoring stale pull request fast-path result', {
+          sessionId,
+          runId,
+        });
+        return;
+      }
 
       if (token?.isCancellationRequested) {
         this.store.clearActiveSession();
@@ -269,10 +380,17 @@ export class ReviewOrchestrator implements vscode.Disposable {
             diff: clusterDiffContent,
           };
 
-          return this.getProvider().review(request, token);
+          return this.invokeProvider(request, token);
         });
 
         const batchResults = await Promise.all(batchPromises);
+        if (!this.isRunCurrent(runId, sessionId)) {
+          logDebug('Ignoring stale pull request cluster batch result', {
+            sessionId,
+            runId,
+          });
+          return;
+        }
 
         for (let j = 0; j < clusterBatch.length; j++) {
           const cluster = clusterBatch[j];
@@ -309,7 +427,14 @@ export class ReviewOrchestrator implements vscode.Disposable {
     let crossFileResult: CrossFileConsistencyResult = { comments: [], issuesFound: 0 };
 
     try {
-      const crossFileReviewResult = await this.getProvider().review(crossFileRequest, token);
+      const crossFileReviewResult = await this.invokeProvider(crossFileRequest, token);
+      if (!this.isRunCurrent(runId, sessionId)) {
+        logDebug('Ignoring stale pull request cross-file result', {
+          sessionId,
+          runId,
+        });
+        return;
+      }
 
       if (token?.isCancellationRequested) {
         this.store.clearActiveSession();
@@ -416,7 +541,65 @@ export class ReviewOrchestrator implements vscode.Disposable {
     return vscode.Uri.joinPath(workspaceFolder.uri, this.normalizeDiffFilePath(filePath)).fsPath;
   }
 
+  private beginRun(): number {
+    const runId = ++this.runSequence;
+    this.activeRunId = runId;
+    this.cancelActiveProviders('superseded');
+    return runId;
+  }
+
+  private isRunCurrent(runId: number, sessionId?: string): boolean {
+    if (this.activeRunId !== runId) {
+      return false;
+    }
+
+    if (sessionId) {
+      return this.store.getActiveSession()?.id === sessionId;
+    }
+
+    return true;
+  }
+
+  private async invokeProvider(request: ReviewRequest, token?: vscode.CancellationToken) {
+    const provider = this.getProvider();
+    this.activeProviders.add(provider);
+
+    try {
+      return await provider.review(request, token);
+    } finally {
+      this.activeProviders.delete(provider);
+    }
+  }
+
+  private cancelActiveProviders(reason: string): void {
+    if (this.activeProviders.size === 0) {
+      return;
+    }
+
+    logDebug('Cancelling active providers', {
+      reason,
+      providerCount: this.activeProviders.size,
+    });
+
+    for (const provider of Array.from(this.activeProviders)) {
+      try {
+        provider.cancel();
+      } catch (error) {
+        logDebug('Provider cancellation failed', {
+          reason,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    this.activeProviders.clear();
+  }
+
+  private isCancellationError(error: Error): boolean {
+    return error.message === 'Review cancelled';
+  }
+
   dispose(): void {
-    // Nothing to dispose here; individual services handle their own disposal
+    this.cancelActiveProviders('dispose');
   }
 }
