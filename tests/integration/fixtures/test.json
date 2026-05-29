@@ -1,0 +1,62 @@
+{
+  "name": "reviewmp-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "review": {
+    "featureFlag": false,
+    "metadata": {
+      "owner": "top-level",
+      "team": "platform",
+      "notes": [
+        "first duplicate section",
+        "used to simulate wrong anchoring"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "eslint src --ext ts"
+  },
+  "dependencies": {
+    "left-pad": "1.3.0"
+  },
+  "workspaces": [
+    "packages/a",
+    "packages/b",
+    "packages/c"
+  ],
+  "nested": {
+    "services": [
+      {
+        "name": "alpha",
+        "enabled": true,
+        "metadata": {
+          "owner": "service-alpha",
+          "status": "ok"
+        }
+      },
+      {
+        "name": "beta",
+        "enabled": true,
+        "metadata": {
+          "owner": "service-beta",
+          "status": "ok"
+        }
+      },
+      {
+        "name": "gamma",
+        "enabled": true,
+        "featureFlag": false,
+        "metadata": {
+          "owner": "nested-target",
+          "status": "broken",
+          "notes": [
+            "second duplicate section",
+            "this is the intended review anchor"
+          ]
+        }
+      }
+    ]
+  }
+}

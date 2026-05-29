@@ -5,11 +5,15 @@ export interface FilePromptResult {
   systemGuidelines: string;
 }
 
-export function buildFileReviewPrompt(request: ReviewRequest): FilePromptResult {
-  const lines = request.code.split('\n');
-  const numberedCode = lines
-    .map((line, index) => `${index + 1}: ${line}`)
+function formatNumberedCode(code: string): string {
+  return code
+    .split('\n')
+    .map((line, index) => `L${String(index + 1).padStart(4, '0')} | ${line}`)
     .join('\n');
+}
+
+export function buildFileReviewPrompt(request: ReviewRequest): FilePromptResult {
+  const numberedCode = formatNumberedCode(request.code);
 
   const basePrompt = `Review the following ${request.languageId} code from file "${request.filePath}".
 
@@ -17,7 +21,7 @@ export function buildFileReviewPrompt(request: ReviewRequest): FilePromptResult 
 ${numberedCode}
 </code>
 
-The code is prefixed with line numbers (1-based). When reporting issues, use the line numbers shown in the code.
+The code is prefixed with 1-based labels like "L0001 |". When reporting issues, use the numeric portion of the label as the line number.
 
 Provide your review as a JSON array of comments. Understand the entire code before reviewing. Each comment should identify issues, suggest improvements, or highlight potential bugs.`;
 
@@ -58,13 +62,13 @@ You MUST output ONLY a valid JSON array at the end. No other text after the JSON
 
 Each comment in the array must have:
 - \`file\`: The file path where the issue is located (required)
-- \`line\`: The 1-based line number where the issue is (use the line numbers shown in the code prefix)
+- \`line\`: The 1-based line number where the issue is (use the numeric portion of the code prefix label)
 - \`title\`: A short imperative title, 4-10 words, like "Add error handling for missing articles"
 - \`message\`: A clear explanation of WHY it's a problem. Do not repeat the title.
 - \`fix\`: (optional) The exact replacement/additional code only. Do not put prose, markdown, or explanation in \`fix\`.
 - \`severity\`: One of "error", "warning", "info", or "suggestion"
 
-IMPORTANT: When code is provided with line number prefixes (e.g., "1: const x = 5;"), use those exact line numbers in your JSON output. Do NOT recalculate or adjust line numbers.`;
+IMPORTANT: When code is provided with labels like "L0007 | const x = 5;", use only the numeric portion in your JSON output, e.g. \`"line": 7\`. Do NOT recalculate or adjust line numbers.`;
 
   return {
     prompt: `${basePrompt}
@@ -77,10 +81,7 @@ ${outputFormat}`,
 }
 
 export function buildSelectionReviewPrompt(request: ReviewRequest, startLine: number): FilePromptResult {
-  const lines = request.code.split('\n');
-  const numberedCode = lines
-    .map((line, index) => `${index + 1}: ${line}`)
-    .join('\n');
+  const numberedCode = formatNumberedCode(request.code);
 
   const basePrompt = `Review the following ${request.languageId} code selection from file "${request.filePath}" (selection starts at line ${startLine + 1}).
 
@@ -88,7 +89,7 @@ export function buildSelectionReviewPrompt(request: ReviewRequest, startLine: nu
 ${numberedCode}
 </code>
 
-The code is prefixed with line numbers (1-based) relative to the selection start. When reporting issues, use the line numbers shown in the code.
+The code is prefixed with 1-based labels like "L0001 |" relative to the selection start. When reporting issues, use the numeric portion of the label as the line number.
 
 Provide your review as a JSON array of comments. Each comment should identify issues, suggest improvements, or highlight potential bugs.`;
 
@@ -129,13 +130,13 @@ You MUST output ONLY a valid JSON array at the end. No other text after the JSON
 
 Each comment in the array must have:
 - \`file\`: The file path where the issue is located (required)
-- \`line\`: The 1-based line number where the issue is (use the line numbers shown in the code prefix)
+- \`line\`: The 1-based line number where the issue is (use the numeric portion of the code prefix label)
 - \`title\`: A short imperative title, 4-10 words, like "Add error handling for missing articles"
 - \`message\`: A clear explanation of WHY it's a problem. Do not repeat the title.
 - \`fix\`: (optional) The exact replacement/additional code only. Do not put prose, markdown, or explanation in \`fix\`.
 - \`severity\`: One of "error", "warning", "info", or "suggestion"
 
-IMPORTANT: When code is provided with line number prefixes (e.g., "1: const x = 5;"), use those exact line numbers in your JSON output.`;
+IMPORTANT: When code is provided with labels like "L0007 | const x = 5;", use only the numeric portion in your JSON output, e.g. \`"line": 7\`.`;
 
   return {
     prompt: `${basePrompt}
