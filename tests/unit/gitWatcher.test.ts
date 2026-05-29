@@ -97,6 +97,7 @@ describe('GitWatcher', () => {
     const watcher = new GitWatcher(onStageCallback, vi.fn().mockResolvedValue(true));
     await Promise.resolve();
 
+    // @ts-expect-error test-only mock injects a staged change shape for the watcher
     mockState.repository.state.indexChanges = [{ uri: { fsPath: 'file-a.ts' } }];
     vi.advanceTimersByTime(2500);
     await Promise.resolve();
@@ -108,12 +109,14 @@ describe('GitWatcher', () => {
 
   it('invokes the stage callback when the staged file set changes without a count increase', async () => {
     mockState.config.autoReviewOnStage = true;
+    // @ts-expect-error test-only mock injects a staged change shape for the watcher
     mockState.repository.state.indexChanges = [{ uri: { fsPath: 'file-a.ts' } }];
 
     const onStageCallback = vi.fn().mockResolvedValue(undefined);
     const watcher = new GitWatcher(onStageCallback, vi.fn().mockResolvedValue(true));
     await Promise.resolve();
 
+    // @ts-expect-error test-only mock injects a staged change shape for the watcher
     mockState.repository.state.indexChanges = [{ uri: { fsPath: 'file-b.ts' } }];
     vi.advanceTimersByTime(2500);
     await Promise.resolve();
