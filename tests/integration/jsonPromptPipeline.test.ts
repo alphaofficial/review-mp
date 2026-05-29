@@ -1,5 +1,7 @@
-import { readFileSync } from 'fs';
-import path from 'path';
+/// <reference types="node" />
+
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TestModelProvider } from './helpers/testModelProvider';
 import { TestRuntimeAdapter } from './helpers/testRuntimeAdapter';
