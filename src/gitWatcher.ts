@@ -34,7 +34,7 @@ export class GitWatcher implements vscode.Disposable {
 
   constructor(
     private onStageCallback: () => Promise<void>,
-    private onPreCommitCallback: () => Promise<boolean>
+    private onCommitCallback: () => Promise<boolean>
   ) {
     this.setupConfigListener();
     this.initGitWatcher();
@@ -106,11 +106,22 @@ export class GitWatcher implements vscode.Disposable {
       this.startPolling();
     }
 
-    // For commit detection, use onDidCommit event
+    // VS Code only exposes a post-commit event here, so trigger the commit callback
+    // when a commit is created and let the caller decide what review to run.
     if (config.autoReviewOnCommit) {
-      const commitDisposable = repo.onDidCommit(() => {
+      const commitDisposable = repo.onDidCommit(async () => {
+        if (this.isReviewing) {
+          return;
+        }
+
         console.log('[ReviewMP] Commit detected');
-        // Commit already happened, could show a post-commit review option
+
+        try {
+          this.isReviewing = true;
+          await this.onCommitCallback();
+        } finally {
+          this.isReviewing = false;
+        }
       });
       this.disposables.push(commitDisposable);
     }

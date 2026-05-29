@@ -116,7 +116,7 @@ export function activate(context: vscode.ExtensionContext) {
         await orchestrator.reviewStaged();
       },
       async () => {
-        await orchestrator.reviewStaged();
+        await orchestrator.reviewLastCommit();
         return true;
       }
     );

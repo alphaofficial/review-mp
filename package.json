@@ -238,7 +238,7 @@
         "reviewmp.autoReviewOnCommit": {
           "type": "boolean",
           "default": false,
-          "description": "Automatically run review before commit (requires pre-commit hook setup)"
+          "description": "Automatically run a review when a commit is created"
         },
         "reviewmp.executableOverride": {
           "type": "string",
