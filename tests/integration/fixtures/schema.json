@@ -1,0 +1,315 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ReviewMP Fixture API",
+    "version": "1.0.0",
+    "description": "OpenAPI schema fixture used for integration tests."
+  },
+  "servers": [
+    {
+      "url": "https://api.example.test"
+    }
+  ],
+  "paths": {
+    "/reviews": {
+      "get": {
+        "operationId": "listReviews",
+        "summary": "List reviews",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createReview",
+        "summary": "Create a review",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateReviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Review created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Review"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reviews/{reviewId}": {
+      "get": {
+        "operationId": "getReview",
+        "summary": "Get review by id",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ReviewId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Review details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Review"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "ReviewId": {
+        "name": "reviewId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "responses": {
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "CreateReviewRequest": {
+        "type": "object",
+        "required": [
+          "repository",
+          "commitSha",
+          "files"
+        ],
+        "properties": {
+          "repository": {
+            "type": "string"
+          },
+          "commitSha": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewFile"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReviewListResponse": {
+        "type": "object",
+        "required": [
+          "items",
+          "page"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Review"
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Review": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "summary",
+          "files"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed"
+            ]
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ReviewSummary"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewFile"
+            }
+          },
+          "links": {
+            "type": "object",
+            "properties": {
+              "self": {
+                "type": "string",
+                "format": "uri"
+              },
+              "html": {
+                "type": "string",
+                "format": "uri"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReviewSummary": {
+        "type": "object",
+        "required": [
+          "commentCount",
+          "warningCount",
+          "errorCount"
+        ],
+        "properties": {
+          "commentCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "warningCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "errorCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReviewFile": {
+        "type": "object",
+        "required": [
+          "path",
+          "language",
+          "findings"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "Finding": {
+        "type": "object",
+        "required": [
+          "line",
+          "severity",
+          "message"
+        ],
+        "properties": {
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "warning",
+              "error"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "suggestedFix": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PageInfo": {
+        "type": "object",
+        "required": [
+          "cursor",
+          "hasNextPage"
+        ],
+        "properties": {
+          "cursor": {
+            "type": "string"
+          },
+          "hasNextPage": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "details": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}
