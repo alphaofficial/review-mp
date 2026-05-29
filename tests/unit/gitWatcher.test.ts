@@ -90,6 +90,39 @@ describe('GitWatcher', () => {
     vi.useRealTimers();
   });
 
+  it('invokes the stage callback when staged file count increases', async () => {
+    mockState.config.autoReviewOnStage = true;
+
+    const onStageCallback = vi.fn().mockResolvedValue(undefined);
+    const watcher = new GitWatcher(onStageCallback, vi.fn().mockResolvedValue(true));
+    await Promise.resolve();
+
+    mockState.repository.state.indexChanges = [{ uri: { fsPath: 'file-a.ts' } }];
+    vi.advanceTimersByTime(2500);
+    await Promise.resolve();
+
+    expect(onStageCallback).toHaveBeenCalledTimes(1);
+
+    watcher.dispose();
+  });
+
+  it('invokes the stage callback when the staged file set changes without a count increase', async () => {
+    mockState.config.autoReviewOnStage = true;
+    mockState.repository.state.indexChanges = [{ uri: { fsPath: 'file-a.ts' } }];
+
+    const onStageCallback = vi.fn().mockResolvedValue(undefined);
+    const watcher = new GitWatcher(onStageCallback, vi.fn().mockResolvedValue(true));
+    await Promise.resolve();
+
+    mockState.repository.state.indexChanges = [{ uri: { fsPath: 'file-b.ts' } }];
+    vi.advanceTimersByTime(2500);
+    await Promise.resolve();
+
+    expect(onStageCallback).toHaveBeenCalledTimes(1);
+
+    watcher.dispose();
+  });
+
   it('invokes the commit callback when autoReviewOnCommit is enabled and a commit event fires', async () => {
     mockState.config.autoReviewOnCommit = true;
 
