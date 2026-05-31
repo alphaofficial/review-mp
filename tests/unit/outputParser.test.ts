@@ -139,6 +139,26 @@ more random text`;
       expect(result[0].message).toBe('This can crash.');
     });
 
+    it('preserves evidence fields when present', () => {
+      const input = [{
+        line: 2,
+        message: 'Evidence-backed issue',
+        evidence: [{
+          file: 'src/example.ts',
+          line: 2,
+          quote: 'return value.length;',
+          reason: 'unsafe dereference',
+        }],
+      }];
+      const result = validateComments(input, 'test.ts');
+      expect(result[0].evidence).toEqual([{
+        file: 'src/example.ts',
+        line: 1,
+        quote: 'return value.length;',
+        reason: 'unsafe dereference',
+      }]);
+    });
+
     it('omits fix field when missing or not a string', () => {
       const input = [
         { line: 1, message: 'No fix' },

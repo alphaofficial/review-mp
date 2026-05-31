@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DiffContextCollector, DiffResult } from '../../src/harness/diffContextCollector';
 
+vi.mock('../../src/settings', () => ({
+  logDebug: vi.fn(),
+}));
+
 vi.mock('vscode', () => ({
   workspace: {
     workspaceFolders: [{ uri: { fsPath: '/test/workspace' } }],
@@ -61,8 +65,8 @@ describe('DiffContextCollector', () => {
       expect(result.diff).toBe(diffOutput);
       expect(result.formattedDiff).toContain('2: added line');
       expect(mockSpawn).toHaveBeenCalledWith(
-        'bash',
-        ['-c', 'git diff --cached'],
+        'git',
+        ['diff', '--cached'],
         expect.objectContaining({ cwd: '/test/workspace' })
       );
     });
@@ -83,8 +87,8 @@ describe('DiffContextCollector', () => {
       const result = await collector.getDiff('uncommitted');
 
       expect(mockSpawn).toHaveBeenCalledWith(
-        'bash',
-        ['-c', 'git diff'],
+        'git',
+        ['diff'],
         expect.any(Object)
       );
       expect(result.formattedDiff).toContain('2: new line');
@@ -106,39 +110,58 @@ describe('DiffContextCollector', () => {
       const result = await collector.getDiff('lastCommit');
 
       expect(mockSpawn).toHaveBeenCalledWith(
-        'bash',
-        ['-c', 'git diff HEAD~1 HEAD'],
+        'git',
+        ['diff', 'HEAD~1', 'HEAD'],
         expect.any(Object)
       );
     });
   });
 
   describe('getDiff - branch', () => {
-    it('should detect base branch and return formatted diff', async () => {
+    it('should diff from the newest resolved branch fork point', async () => {
       const diffOutput = `diff --git a/test.ts b/test.ts
 --- a/test.ts
 +++ b/test.ts
 @@ -1,2 +1,3 @@
  line1
 +branch only line`;
-
-      mockSpawn
-        .mockReturnValueOnce(createMockProc('main', 0))
-        .mockReturnValueOnce(createMockProc(diffOutput));
+      mockSpawn.mockImplementation((command: string, args: string[]) => {
+        const serialized = `${command} ${args.join(' ')}`;
+        switch (serialized) {
+          case 'git rev-parse --abbrev-ref HEAD':
+            return createMockProc('feature/current');
+          case 'git rev-parse HEAD':
+            return createMockProc('head-sha');
+          case 'git symbolic-ref refs/remotes/origin/HEAD':
+            return createMockProc('refs/remotes/origin/main');
+          case 'git for-each-ref --format=%(refname:short) refs/heads refs/remotes':
+            return createMockProc(['feature/current', 'origin/feature/current', 'origin/main', 'origin/release/mobile'].join('\n'));
+          case 'git merge-base --fork-point origin/main HEAD':
+            return createMockProc('main-base-sha');
+          case 'git show -s --format=%ct main-base-sha':
+            return createMockProc('100');
+          case 'git merge-base --fork-point origin/release/mobile HEAD':
+            return createMockProc('release-base-sha');
+          case 'git show -s --format=%ct release-base-sha':
+            return createMockProc('200');
+          case 'git diff release-base-sha head-sha':
+            return createMockProc(diffOutput);
+          default:
+            return createMockProc('', 128);
+        }
+      });
 
       const collector = new DiffContextCollector();
       const result = await collector.getDiff('branch');
 
       expect(mockSpawn).toHaveBeenCalledWith(
         'git',
-        ['rev-parse', '--verify', 'main'],
+        ['diff', 'release-base-sha', 'head-sha'],
         expect.any(Object)
       );
-      expect(mockSpawn).toHaveBeenCalledWith(
-        'bash',
-        ['-c', 'git diff main...HEAD'],
-        expect.any(Object)
-      );
+      expect(result.baseRef).toBe('origin/release/mobile');
+      expect(result.baseSha).toBe('release-base-sha');
+      expect(result.headSha).toBe('head-sha');
       expect(result.formattedDiff).toContain('2: branch only line');
     });
   });
@@ -249,144 +272,83 @@ describe('DiffContextCollector', () => {
     });
   });
 
-  describe('detectBaseBranch', () => {
-    it('should return main when it exists', async () => {
-      mockSpawn.mockReturnValueOnce(createMockProc('main', 0));
+  describe('resolveBranchBase', () => {
+    it('should fallback to merge-base when fork-point is unavailable', async () => {
+      mockSpawn.mockImplementation((command: string, args: string[]) => {
+        const serialized = `${command} ${args.join(' ')}`;
+        switch (serialized) {
+          case 'git rev-parse --abbrev-ref HEAD':
+            return createMockProc('feature/current');
+          case 'git rev-parse HEAD':
+            return createMockProc('head-sha');
+          case 'git symbolic-ref refs/remotes/origin/HEAD':
+            return createMockProc('refs/remotes/origin/main');
+          case 'git for-each-ref --format=%(refname:short) refs/heads refs/remotes':
+            return createMockProc(['feature/current', 'origin/feature/current', 'origin/main'].join('\n'));
+          case 'git merge-base --fork-point origin/main HEAD':
+            return createMockProc('', 128);
+          case 'git merge-base origin/main HEAD':
+            return createMockProc('main-base-sha');
+          case 'git show -s --format=%ct main-base-sha':
+            return createMockProc('100');
+          case 'git diff main-base-sha head-sha':
+            return createMockProc('');
+          default:
+            return createMockProc('', 128);
+        }
+      });
 
       const collector = new DiffContextCollector();
       const result = await collector.getDiff('branch');
 
+      expect(result.baseRef).toBe('origin/main');
+      expect(result.baseSha).toBe('main-base-sha');
       expect(mockSpawn).toHaveBeenCalledWith(
         'git',
-        ['rev-parse', '--verify', 'main'],
-        expect.any(Object)
-      );
-      expect(mockSpawn).toHaveBeenCalledWith(
-        'bash',
-        ['-c', 'git diff main...HEAD'],
+        ['merge-base', 'origin/main', 'HEAD'],
         expect.any(Object)
       );
     });
 
-    it('should fallback to origin/main when main does not exist', async () => {
-      mockSpawn
-        .mockReturnValueOnce(createMockProc('', 128))
-        .mockReturnValueOnce(createMockProc('origin/main', 0));
-
-      const collector = new DiffContextCollector();
-      await collector.getDiff('branch');
-
-      expect(mockSpawn).toHaveBeenCalledWith(
-        'git',
-        ['rev-parse', '--verify', 'main'],
-        expect.any(Object)
-      );
-      expect(mockSpawn).toHaveBeenCalledWith(
-        'git',
-        ['rev-parse', '--verify', 'origin/main'],
-        expect.any(Object)
-      );
-    });
-
-    it('should fallback to master when main and origin/main do not exist', async () => {
-      mockSpawn
-        .mockReturnValueOnce(createMockProc('', 128))
-        .mockReturnValueOnce(createMockProc('', 128))
-        .mockReturnValueOnce(createMockProc('master', 0));
-
-      const collector = new DiffContextCollector();
-      await collector.getDiff('branch');
-
-      expect(mockSpawn).toHaveBeenCalledWith(
-        'git',
-        ['rev-parse', '--verify', 'main'],
-        expect.any(Object)
-      );
-      expect(mockSpawn).toHaveBeenCalledWith(
-        'git',
-        ['rev-parse', '--verify', 'origin/main'],
-        expect.any(Object)
-      );
-      expect(mockSpawn).toHaveBeenCalledWith(
-        'git',
-        ['rev-parse', '--verify', 'master'],
-        expect.any(Object)
-      );
-    });
-
-    it('should fallback to origin/master when master does not exist', async () => {
-      mockSpawn
-        .mockReturnValueOnce(createMockProc('', 128))
-        .mockReturnValueOnce(createMockProc('', 128))
-        .mockReturnValueOnce(createMockProc('', 128))
-        .mockReturnValueOnce(createMockProc('origin/master', 0));
-
-      const collector = new DiffContextCollector();
-      await collector.getDiff('branch');
-
-      expect(mockSpawn).toHaveBeenCalledWith(
-        'git',
-        ['rev-parse', '--verify', 'origin/master'],
-        expect.any(Object)
-      );
-    });
-
-    it('should fallback to symbolic-ref when other branches do not exist', async () => {
-      mockSpawn
-        .mockReturnValueOnce(createMockProc('', 128))
-        .mockReturnValueOnce(createMockProc('', 128))
-        .mockReturnValueOnce(createMockProc('', 128))
-        .mockReturnValueOnce(createMockProc('', 128))
-        .mockReturnValueOnce(createMockProc('refs/remotes/origin/develop', 0));
-
-      const collector = new DiffContextCollector();
-      await collector.getDiff('branch');
-
-      expect(mockSpawn).toHaveBeenCalledWith(
-        'git',
-        ['symbolic-ref', 'refs/remotes/origin/HEAD'],
-        expect.any(Object)
-      );
-    });
-
-    it('should prompt user when no branch detected via symbolic-ref', async () => {
-      mockSpawn
-        .mockReturnValueOnce(createMockProc('', 128))
-        .mockReturnValueOnce(createMockProc('', 128))
-        .mockReturnValueOnce(createMockProc('', 128))
-        .mockReturnValueOnce(createMockProc('', 128))
-        .mockReturnValueOnce(createMockProc('', 128));
+    it('should prompt when no automatic branch base can be resolved', async () => {
+      mockSpawn.mockImplementation((command: string, args: string[]) => {
+        const serialized = `${command} ${args.join(' ')}`;
+        switch (serialized) {
+          case 'git rev-parse --abbrev-ref HEAD':
+            return createMockProc('feature/current');
+          case 'git rev-parse HEAD':
+            return createMockProc('head-sha');
+          case 'git symbolic-ref refs/remotes/origin/HEAD':
+            return createMockProc('', 128);
+          case 'git for-each-ref --format=%(refname:short) refs/heads refs/remotes':
+            return createMockProc(['feature/current', 'origin/feature/current'].join('\n'));
+          case 'git merge-base --fork-point release/mobile HEAD':
+            return createMockProc('', 128);
+          case 'git merge-base release/mobile HEAD':
+            return createMockProc('release-base-sha');
+          case 'git diff release-base-sha head-sha':
+            return createMockProc('');
+          default:
+            return createMockProc('', 128);
+        }
+      });
 
       const { window } = await vi.importMock('vscode');
-      window.showInputBox.mockResolvedValue('develop');
+      window.showInputBox.mockResolvedValue('release/mobile');
 
       const collector = new DiffContextCollector();
-      await collector.getDiff('branch');
+      const result = await collector.getDiff('branch');
 
       expect(window.showInputBox).toHaveBeenCalledWith({
-        prompt: 'Could not detect base branch. Please enter the base branch name:',
+        prompt: 'Could not determine the branch base. Please enter the base branch name:',
         placeHolder: 'main',
         value: 'main',
       });
-    });
-
-    it('should return user input as branch name', async () => {
-      mockSpawn
-        .mockReturnValueOnce(createMockProc('', 128))
-        .mockReturnValueOnce(createMockProc('', 128))
-        .mockReturnValueOnce(createMockProc('', 128))
-        .mockReturnValueOnce(createMockProc('', 128))
-        .mockReturnValueOnce(createMockProc('', 128));
-
-      const { window } = await vi.importMock('vscode');
-      window.showInputBox.mockResolvedValue('feature-branch');
-
-      const collector = new DiffContextCollector();
-      await collector.getDiff('branch');
-
+      expect(result.baseRef).toBe('release/mobile');
+      expect(result.baseSha).toBe('release-base-sha');
       expect(mockSpawn).toHaveBeenCalledWith(
-        'bash',
-        ['-c', 'git diff feature-branch...HEAD'],
+        'git',
+        ['diff', 'release-base-sha', 'head-sha'],
         expect.any(Object)
       );
     });
@@ -402,7 +364,7 @@ describe('DiffContextCollector', () => {
       });
 
       const collector = new DiffContextCollector();
-      await expect(collector.getDiff('staged')).rejects.toThrow('git exited with code 128');
+      await expect(collector.getDiff('staged')).rejects.toThrow('fatal: not a git repository');
     });
 
     it('should handle empty diff output', async () => {

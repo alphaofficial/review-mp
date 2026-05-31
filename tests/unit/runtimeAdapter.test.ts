@@ -37,6 +37,18 @@ const createOpencodeManifest = (): RuntimeManifest => ({
   supportsExtraArgs: true,
 });
 
+const createCodexManifest = (): RuntimeManifest => ({
+  id: 'codex',
+  name: 'Codex',
+  executable: 'codex',
+  promptTransport: 'stdin',
+  outputFormat: 'text',
+  supportsModelOverride: true,
+  supportsExecutableOverride: true,
+  supportsExtraArgs: true,
+  prePromptArgs: ['exec'],
+});
+
 const createSettings = (overrides: Partial<RuntimeSettings> = {}): RuntimeSettings => ({
   runtime: 'opencode',
   model: undefined,
@@ -680,6 +692,103 @@ describe('CliRuntimeAdapter prompt building', () => {
     const promptArg = callArgs[callArgs.length - 1];
     expect(typeof promptArg).toBe('string');
     expect(promptArg.length).toBeGreaterThan(0);
+  });
+
+  it('preserves review criteria while adding review-only prompt boundaries', async () => {
+    const mockProc = {
+      pid: 12345,
+      kill: vi.fn(),
+      stdout: { on: vi.fn((event, cb) => {
+        if (event === 'data') {
+          cb(Buffer.from('[{"line": 1, "message": "Test"}]'));
+        }
+      }) },
+      stderr: { on: vi.fn() },
+      stdin: { write: vi.fn(), end: vi.fn() },
+      on: vi.fn((event, cb) => {
+        if (event === 'close') {
+          cb(0, null);
+        }
+      }),
+    };
+    mockSpawn.mockReturnValue(mockProc);
+
+    const manifest = createOpencodeManifest();
+    const settings = createSettings();
+    const adapter = new CliRuntimeAdapter(manifest, settings);
+
+    const request = {
+      code: 'export const value = helper();',
+      languageId: 'typescript',
+      filePath: 'src/example.ts',
+      reviewType: 'file' as const,
+      crossFileContext: 'Related file: src/helper.ts\n```typescript\nexport function helper() { return true; }\n```',
+      reviewPackage: {
+        scopeLabel: 'file:src/example.ts',
+        strictReviewOnly: true,
+        target: {
+          kind: 'file' as const,
+          label: 'Primary file under review',
+          filePath: 'src/example.ts',
+          languageId: 'typescript',
+          content: 'export const value = helper();',
+        },
+        supportingContext: [{
+          label: 'Related file: src/helper.ts',
+          filePath: 'src/helper.ts',
+          languageId: 'typescript',
+          content: 'export function helper() { return true; }',
+          reason: 'importedDependency' as const,
+        }],
+        notes: ['Do not inspect other files.'],
+      },
+    };
+
+    await adapter.invoke(request);
+
+    const promptArg = getSpawnArgv().at(-1) ?? '';
+    expect(promptArg).toContain('## Review Guidelines');
+    expect(promptArg).toContain('Do NOT:');
+    expect(promptArg).toContain('Inspect other files, search the repository, or gather additional context beyond what was supplied');
+    expect(promptArg).toContain('Review only the supplied target and supporting context');
+    expect(promptArg).toContain('Relevant context for this review:');
+  });
+
+  it('adds a codex-specific review-only preamble without changing review content', async () => {
+    const mockProc = {
+      pid: 12345,
+      kill: vi.fn(),
+      stdout: { on: vi.fn((event, cb) => {
+        if (event === 'data') {
+          cb(Buffer.from('[{"line": 1, "message": "Test"}]'));
+        }
+      }) },
+      stderr: { on: vi.fn() },
+      stdin: { write: vi.fn(), end: vi.fn() },
+      on: vi.fn((event, cb) => {
+        if (event === 'close') {
+          cb(0, null);
+        }
+      }),
+    };
+    mockSpawn.mockReturnValue(mockProc);
+
+    const manifest = createCodexManifest();
+    const settings = createSettings({ runtime: 'codex' });
+    const adapter = new CliRuntimeAdapter(manifest, settings);
+
+    await adapter.invoke({
+      code: 'const value = 1;',
+      languageId: 'typescript',
+      filePath: 'src/example.ts',
+      reviewType: 'file',
+    });
+
+    const prompt = mockProc.stdin.write.mock.calls[0]?.[0] as string;
+    expect(prompt).toContain('REVIEW-ONLY MODE');
+    expect(prompt).toContain('Do not search the repository.');
+    expect(prompt).toContain('If the supplied material is insufficient, return no finding rather than exploring.');
+    expect(prompt).toContain('## Review Guidelines');
   });
 });
 

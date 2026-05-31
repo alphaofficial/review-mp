@@ -1,9 +1,49 @@
 import { EventEmitter } from 'events';
-import { FindingAction, ReviewFile, ReviewFinding, ReviewHistoryEntry, ReviewSession, ReviewStatus, ReviewType, Severity } from '../types/review';
+import { FindingAction, ReviewFile, ReviewFinding, ReviewHistoryEntry, ReviewSession, ReviewStatus, ReviewTargetKind, ReviewType, Severity } from '../types/review';
 import { logDebug } from '../settings';
 
 let findingIdCounter = 0;
 const MAX_SESSION_HISTORY = 5;
+type SessionTransitionEvent = 'startSetup' | 'beginAnalysis' | 'beginReview' | 'complete' | 'fail';
+type FileTransitionEvent = 'beginReview' | 'complete' | 'fail';
+
+const SESSION_TRANSITIONS: Record<ReviewStatus, Partial<Record<SessionTransitionEvent, ReviewStatus>>> = {
+  idle: {
+    startSetup: 'settingUp',
+    fail: 'failed',
+  },
+  settingUp: {
+    beginAnalysis: 'analyzing',
+    fail: 'failed',
+  },
+  analyzing: {
+    beginReview: 'reviewing',
+    complete: 'completed',
+    fail: 'failed',
+  },
+  reviewing: {
+    complete: 'completed',
+    fail: 'failed',
+  },
+  completed: {},
+  failed: {},
+};
+
+const FILE_TRANSITIONS: Record<ReviewFile['status'], Partial<Record<FileTransitionEvent, ReviewFile['status']>>> = {
+  pending: {
+    beginReview: 'reviewing',
+    fail: 'failed',
+  },
+  reviewing: {
+    complete: 'reviewed',
+    fail: 'failed',
+  },
+  reviewed: {
+    beginReview: 'reviewing',
+    fail: 'failed',
+  },
+  failed: {},
+};
 
 function generateFindingId(): string {
   return `finding-${Date.now()}-${++findingIdCounter}`;
@@ -60,7 +100,6 @@ export class ReviewSessionStore extends EventEmitter {
       uncommitted: 'Uncommitted Changes Review',
       lastCommit: 'Last Commit Review',
       branch: `Branch Review: ${branch || 'current'}`,
-      pullRequest: 'Pull Request Review',
     };
     return typeLabels[reviewType];
   }
@@ -71,6 +110,20 @@ export class ReviewSessionStore extends EventEmitter {
 
   getSessionHistory(): ReviewHistoryEntry[] {
     return [...this.sessionHistory];
+  }
+
+  setSessionReviewMetadata(metadata: {
+    reviewFingerprint?: string;
+    reviewTargetKind?: ReviewTargetKind;
+    unitFingerprints?: string[];
+  }): void {
+    if (!this.activeSession) {
+      return;
+    }
+
+    this.activeSession.reviewFingerprint = metadata.reviewFingerprint;
+    this.activeSession.reviewTargetKind = metadata.reviewTargetKind;
+    this.activeSession.unitFingerprints = metadata.unitFingerprints ? [...metadata.unitFingerprints] : undefined;
   }
 
   setFilesToReview(filePaths: string[]): void {
@@ -96,38 +149,44 @@ export class ReviewSessionStore extends EventEmitter {
     });
   }
 
-  updateSessionStatus(status: ReviewStatus): void {
+  transitionSession(event: SessionTransitionEvent, error?: string): boolean {
     if (!this.activeSession) {
-      return;
+      return false;
     }
 
-    this.activeSession.status = status;
+    const nextStatus = SESSION_TRANSITIONS[this.activeSession.status][event];
+    if (!nextStatus) {
+      logDebug('Rejected review session transition', {
+        sessionId: this.activeSession.id,
+        reviewType: this.activeSession.reviewType,
+        currentStatus: this.activeSession.status,
+        event,
+      });
+      return false;
+    }
+
+    if (nextStatus === 'failed' && error) {
+      this.activeSession.error = error;
+    }
+
+    this.activeSession.status = nextStatus;
     logDebug('Review session status changed', {
       sessionId: this.activeSession.id,
       reviewType: this.activeSession.reviewType,
-      status,
+      event,
+      status: nextStatus,
     });
-    this.emit('status-changed', { sessionId: this.activeSession.id, status });
+    this.emit('status-changed', { sessionId: this.activeSession.id, status: nextStatus });
 
-    if (status === 'completed' || status === 'failed') {
+    if (nextStatus === 'completed' || nextStatus === 'failed') {
       this.finalizeSession();
     }
+
+    return true;
   }
 
   setSessionError(error: string): void {
-    if (!this.activeSession) {
-      return;
-    }
-
-    this.activeSession.error = error;
-    this.activeSession.status = 'failed';
-    logDebug('Review session failed', {
-      sessionId: this.activeSession.id,
-      reviewType: this.activeSession.reviewType,
-      error,
-    });
-    this.emit('status-changed', { sessionId: this.activeSession.id, status: 'failed' });
-    this.finalizeSession();
+    this.transitionSession('fail', error);
   }
 
   private finalizeSession(): void {
@@ -150,6 +209,9 @@ export class ReviewSessionStore extends EventEmitter {
         findings: file.findings.map(finding => ({ ...finding })),
       })),
       findings: this.activeSession.findings.map(finding => ({ ...finding })),
+      reviewFingerprint: this.activeSession.reviewFingerprint,
+      reviewTargetKind: this.activeSession.reviewTargetKind,
+      unitFingerprints: this.activeSession.unitFingerprints ? [...this.activeSession.unitFingerprints] : undefined,
     };
 
     this.sessionHistory.unshift(entry);
@@ -161,7 +223,15 @@ export class ReviewSessionStore extends EventEmitter {
     this.emit('session-completed', { sessionId: this.activeSession.id });
   }
 
-  addFinding(file: string, line: number, message: string, severity: Severity, fix?: string, title?: string): ReviewFinding | null {
+  addFinding(
+    file: string,
+    line: number,
+    message: string,
+    severity: Severity,
+    fix?: string,
+    title?: string,
+    metadata?: Pick<ReviewFinding, 'findingKey' | 'reviewFingerprint' | 'unitFingerprint' | 'source'>
+  ): ReviewFinding | null {
     if (!this.activeSession) {
       return null;
     }
@@ -176,6 +246,10 @@ export class ReviewSessionStore extends EventEmitter {
       fix,
       status: 'pending',
       createdAt: Date.now(),
+      findingKey: metadata?.findingKey,
+      reviewFingerprint: metadata?.reviewFingerprint ?? this.activeSession.reviewFingerprint,
+      unitFingerprint: metadata?.unitFingerprint,
+      source: metadata?.source ?? 'fresh',
     };
 
     this.activeSession.findings.push(finding);
@@ -194,19 +268,40 @@ export class ReviewSessionStore extends EventEmitter {
 
     reviewFile.findings.push(finding);
 
-    if (reviewFile.status === 'pending') {
-      reviewFile.status = 'reviewing';
-      this.emit('file-status-changed', { sessionId: this.activeSession.id, filePath: file, status: 'reviewing' });
-    }
+    this.transitionFileStatus(this.activeSession, reviewFile, 'beginReview');
 
     this.emit('finding-added', { sessionId: this.activeSession.id, finding });
     return finding;
   }
 
-  addFindingsFromComments(comments: Array<{ file: string; line: number; title?: string; message: string; severity?: Severity; fix?: string }>): ReviewFinding[] {
+  addFindingsFromComments(comments: Array<{
+    file: string;
+    line: number;
+    title?: string;
+    message: string;
+    severity?: Severity;
+    fix?: string;
+    findingKey?: string;
+    reviewFingerprint?: string;
+    unitFingerprint?: string;
+    source?: 'fresh' | 'reused';
+  }>): ReviewFinding[] {
     const findings: ReviewFinding[] = [];
     for (const comment of comments) {
-      const finding = this.addFinding(comment.file, comment.line, comment.message, comment.severity || 'info', comment.fix, comment.title);
+      const finding = this.addFinding(
+        comment.file,
+        comment.line,
+        comment.message,
+        comment.severity || 'info',
+        comment.fix,
+        comment.title,
+        {
+          findingKey: comment.findingKey,
+          reviewFingerprint: comment.reviewFingerprint,
+          unitFingerprint: comment.unitFingerprint,
+          source: comment.source,
+        }
+      );
       if (finding) {
         findings.push(finding);
       }
@@ -250,9 +345,48 @@ export class ReviewSessionStore extends EventEmitter {
     }
 
     const allProcessed = reviewFile.findings.every(f => f.status !== 'pending');
-    if (allProcessed && reviewFile.status !== 'reviewed') {
-      reviewFile.status = 'reviewed';
-      this.emit('file-status-changed', { sessionId: session.id, filePath, status: 'reviewed' });
+    if (allProcessed) {
+      this.transitionFileStatus(session, reviewFile, 'complete');
+    }
+  }
+
+  markFilesReviewing(filePaths: string[]): void {
+    if (!this.activeSession) {
+      return;
+    }
+
+    for (const filePath of [...new Set(filePaths.filter(file => file.trim().length > 0))]) {
+      let reviewFile = this.activeSession.files.get(filePath);
+      if (!reviewFile) {
+        reviewFile = {
+          path: filePath,
+          status: 'pending',
+          findings: [],
+        };
+        this.activeSession.files.set(filePath, reviewFile);
+      }
+
+      this.transitionFileStatus(this.activeSession, reviewFile, 'beginReview');
+    }
+  }
+
+  completeFilesReview(filePaths: string[]): void {
+    if (!this.activeSession) {
+      return;
+    }
+
+    for (const filePath of [...new Set(filePaths.filter(file => file.trim().length > 0))]) {
+      const reviewFile = this.activeSession.files.get(filePath);
+      if (!reviewFile) {
+        continue;
+      }
+
+      const hasPendingFindings = reviewFile.findings.some((finding) => finding.status === 'pending');
+      if (hasPendingFindings) {
+        continue;
+      }
+
+      this.transitionFileStatus(this.activeSession, reviewFile, 'complete');
     }
   }
 
@@ -290,6 +424,9 @@ export class ReviewSessionStore extends EventEmitter {
       files,
       findings: entry.findings.map(finding => ({ ...finding })),
       totalFindings: entry.findingsCount,
+      reviewFingerprint: entry.reviewFingerprint,
+      reviewTargetKind: entry.reviewTargetKind,
+      unitFingerprints: entry.unitFingerprints ? [...entry.unitFingerprints] : undefined,
     };
 
     this.activeSession = session;
@@ -320,9 +457,7 @@ export class ReviewSessionStore extends EventEmitter {
     if (reviewFile.status === 'failed') {
       return true;
     }
-    reviewFile.status = 'failed';
-    this.emit('file-status-changed', { sessionId: this.activeSession.id, filePath, status: 'failed' });
-    return true;
+    return this.transitionFileStatus(this.activeSession, reviewFile, 'fail');
   }
 
   getPendingFindingsCount(): number {
@@ -352,6 +487,17 @@ export class ReviewSessionStore extends EventEmitter {
     this.removeAllListeners();
     this.clearActiveSession();
     this.clearHistory();
+  }
+
+  private transitionFileStatus(session: ReviewSession, reviewFile: ReviewFile, event: FileTransitionEvent): boolean {
+    const nextStatus = FILE_TRANSITIONS[reviewFile.status][event];
+    if (!nextStatus) {
+      return false;
+    }
+
+    reviewFile.status = nextStatus;
+    this.emit('file-status-changed', { sessionId: session.id, filePath: reviewFile.path, status: nextStatus });
+    return true;
   }
 }
 

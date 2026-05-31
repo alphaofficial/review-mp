@@ -6,6 +6,7 @@ export interface Settings {
   model: string;
   autoReviewOnStage: boolean;
   autoReviewOnCommit: boolean;
+  codeIndexEnabled: boolean;
   executableOverride: string;
   extraArgs: string;
 }
@@ -13,20 +14,28 @@ export interface Settings {
 let outputChannel: vscode.OutputChannel | undefined;
 
 export function getSettings(): Settings {
-  const config = vscode.workspace.getConfiguration('reviewmp');
+  const config = typeof vscode.workspace?.getConfiguration === 'function'
+    ? vscode.workspace.getConfiguration('reviewmp')
+    : undefined;
   return {
-    runtime: config.get<RuntimeId>('runtime', DEFAULT_RUNTIME_ID),
-    model: config.get<string>('model', ''),
-    autoReviewOnStage: config.get<boolean>('autoReviewOnStage', false),
-    autoReviewOnCommit: config.get<boolean>('autoReviewOnCommit', false),
-    executableOverride: config.get<string>('executableOverride', ''),
-    extraArgs: config.get<string>('extraArgs', ''),
+    runtime: config?.get<RuntimeId>('runtime', DEFAULT_RUNTIME_ID) ?? DEFAULT_RUNTIME_ID,
+    model: config?.get<string>('model', '') ?? '',
+    autoReviewOnStage: config?.get<boolean>('autoReviewOnStage', false) ?? false,
+    autoReviewOnCommit: config?.get<boolean>('autoReviewOnCommit', false) ?? false,
+    codeIndexEnabled: config?.get<boolean>('codeIndexEnabled', true) ?? true,
+    executableOverride: config?.get<string>('executableOverride', '') ?? '',
+    extraArgs: config?.get<string>('extraArgs', '') ?? '',
   };
 }
 
 export async function setRuntime(runtime: RuntimeId): Promise<void> {
   const config = vscode.workspace.getConfiguration('reviewmp');
   await config.update('runtime', runtime, vscode.ConfigurationTarget.Global);
+}
+
+export async function setCodeIndexEnabled(enabled: boolean): Promise<void> {
+  const config = vscode.workspace.getConfiguration('reviewmp');
+  await config.update('codeIndexEnabled', enabled, vscode.ConfigurationTarget.Workspace);
 }
 
 function getOutputChannel(): vscode.OutputChannel {

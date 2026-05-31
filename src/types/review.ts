@@ -12,6 +12,10 @@ export interface ReviewFinding {
   fix?: string;
   status: 'pending' | 'applied' | 'dismissed';
   createdAt: number;
+  findingKey?: string;
+  reviewFingerprint?: string;
+  unitFingerprint?: string;
+  source?: 'fresh' | 'reused';
 }
 
 export interface ReviewFile {
@@ -33,6 +37,9 @@ export interface ReviewSession {
   findings: ReviewFinding[];
   totalFindings: number;
   error?: string;
+  reviewFingerprint?: string;
+  reviewTargetKind?: ReviewTargetKind;
+  unitFingerprints?: string[];
 }
 
 export interface ReviewHistoryEntry {
@@ -45,6 +52,9 @@ export interface ReviewHistoryEntry {
   duration: number;
   files: ReviewFile[];
   findings: ReviewFinding[];
+  reviewFingerprint?: string;
+  reviewTargetKind?: ReviewTargetKind;
+  unitFingerprints?: string[];
 }
 
 export type FindingAction = 'apply' | 'dismiss';
@@ -56,9 +66,59 @@ export interface ReviewComment {
   message: string;
   fix?: string;
   severity?: Severity;
+  evidence?: ReviewEvidence[];
+  findingKey?: string;
+  reviewFingerprint?: string;
+  unitFingerprint?: string;
+  source?: 'fresh' | 'reused';
 }
 
-export type ReviewType = 'file' | 'selection' | 'staged' | 'uncommitted' | 'lastCommit' | 'branch' | 'pullRequest';
+export interface ReviewEvidence {
+  file: string;
+  line?: number;
+  quote: string;
+  reason?: string;
+}
+
+export type ReviewContextReason =
+  | 'diff-manifest'
+  | 'related-change'
+  | 'recent-change'
+  | 'existing-finding'
+  | 'semantic-match'
+  | 'review-memory'
+  | 'code-graph'
+  | 'file-summary'
+  | 'repo-summary';
+
+export interface ReviewContextItem {
+  filePath: string;
+  reason: ReviewContextReason;
+  content: string;
+}
+
+export type ReviewTargetKind = 'file' | 'selection' | 'diff';
+
+export interface ReviewTarget {
+  kind: ReviewTargetKind;
+  filePath: string;
+  languageId?: string;
+  startLine?: number;
+  endLine?: number;
+  content: string;
+  pathHint?: string;
+}
+
+export interface ReviewPackage {
+  reviewType: ReviewType;
+  strictReviewOnly: boolean;
+  scopeLabel: string;
+  target: ReviewTarget;
+  supportingContext: ReviewContextItem[];
+  notes?: string[];
+}
+
+export type ReviewType = 'file' | 'selection' | 'staged' | 'uncommitted' | 'lastCommit' | 'branch';
 
 export interface ReviewRequest {
   code: string;
@@ -68,6 +128,8 @@ export interface ReviewRequest {
   diff?: string;
   startLine?: number;
   crossFileContext?: string;
+  fullDocumentCode?: string;
+  reviewPackage?: ReviewPackage;
 }
 
 export interface ReviewResult {

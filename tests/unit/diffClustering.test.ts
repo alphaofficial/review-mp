@@ -10,6 +10,8 @@ import {
   deduplicateComments,
   FileDiff,
   DiffResult,
+  classifyDiffFile,
+  isReviewableDiffFile,
 } from '../../src/harness/diffClustering';
 
 describe('diffClustering', () => {
@@ -35,6 +37,7 @@ diff --git a/src/file2.ts b/src/file2.ts
       expect(files).toHaveLength(2);
       expect(files[0].filePath).toBe('src/file1.ts');
       expect(files[1].filePath).toBe('src/file2.ts');
+      expect(files.every((file) => file.reviewability === 'reviewable')).toBe(true);
     });
 
     it('should extract hunks from diff', () => {
@@ -99,6 +102,7 @@ diff --git a/src/file2.ts b/src/file2.ts
           newCount: 3,
         }],
         rawDiff: '',
+        reviewability: 'reviewable',
       };
 
       const imports = extractImportsFromDiff(fileDiff);
@@ -115,11 +119,13 @@ diff --git a/src/file2.ts b/src/file2.ts
           filePath: 'src/a.ts',
           hunks: [],
           rawDiff: '',
+          reviewability: 'reviewable',
         },
         {
           filePath: 'src/b.ts',
           hunks: [],
           rawDiff: '',
+          reviewability: 'reviewable',
         },
       ];
 
@@ -133,9 +139,9 @@ diff --git a/src/file2.ts b/src/file2.ts
   describe('clusterFilesBFS', () => {
     it('should cluster related files together', () => {
       const files: FileDiff[] = [
-        { filePath: 'a.ts', hunks: [], rawDiff: '' },
-        { filePath: 'b.ts', hunks: [], rawDiff: '' },
-        { filePath: 'c.ts', hunks: [], rawDiff: '' },
+        { filePath: 'a.ts', hunks: [], rawDiff: '', reviewability: 'reviewable' },
+        { filePath: 'b.ts', hunks: [], rawDiff: '', reviewability: 'reviewable' },
+        { filePath: 'c.ts', hunks: [], rawDiff: '', reviewability: 'reviewable' },
       ];
 
       const graph = new Map<string, Set<string>>();
@@ -153,6 +159,7 @@ diff --git a/src/file2.ts b/src/file2.ts
         filePath: `file${i}.ts`,
         hunks: [],
         rawDiff: '',
+        reviewability: 'reviewable',
       }));
 
       const graph = new Map<string, Set<string>>();
@@ -170,9 +177,9 @@ diff --git a/src/file2.ts b/src/file2.ts
     it('should build diff content for cluster', () => {
       const cluster = { id: 0, files: ['a.ts', 'b.ts'], totalLines: 0, diffContent: '' };
       const fileDiffs: FileDiff[] = [
-        { filePath: 'a.ts', hunks: [], rawDiff: 'diff for a' },
-        { filePath: 'b.ts', hunks: [], rawDiff: 'diff for b' },
-        { filePath: 'c.ts', hunks: [], rawDiff: 'diff for c' },
+        { filePath: 'a.ts', hunks: [], rawDiff: 'diff for a', reviewability: 'reviewable' },
+        { filePath: 'b.ts', hunks: [], rawDiff: 'diff for b', reviewability: 'reviewable' },
+        { filePath: 'c.ts', hunks: [], rawDiff: 'diff for c', reviewability: 'reviewable' },
       ];
 
       const result = buildClusterDiff(cluster, fileDiffs);
@@ -237,6 +244,32 @@ diff --git a/src/file2.ts b/src/file2.ts
       const result = deduplicateComments(comments);
 
       expect(result).toHaveLength(2);
+    });
+  });
+
+  describe('reviewability classification', () => {
+    it('classifies svg files as non-reviewable', () => {
+      const classification = classifyDiffFile('assets/logo.svg', 'diff --git a/assets/logo.svg b/assets/logo.svg');
+
+      expect(classification.reviewability).toBe('non-code');
+      expect(classification.skipReason).toContain('non-code');
+    });
+
+    it('classifies dependency lockfiles as non-reviewable', () => {
+      const classification = classifyDiffFile('package-lock.json', 'diff --git a/package-lock.json b/package-lock.json');
+
+      expect(classification.reviewability).toBe('dependency-lockfile');
+      expect(classification.skipReason).toBe('dependency lockfile');
+    });
+
+    it('keeps source files reviewable', () => {
+      const files = parseDiffIntoFiles(`diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1,1 +1,2 @@
++const value = true;`);
+
+      expect(isReviewableDiffFile(files[0])).toBe(true);
     });
   });
 });

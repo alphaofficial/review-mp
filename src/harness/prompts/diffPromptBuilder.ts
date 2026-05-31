@@ -7,17 +7,34 @@ export interface DiffPromptResult {
 
 export function buildDiffReviewPrompt(request: ReviewRequest, formattedDiff: string): DiffPromptResult {
   const reviewTypeLabel = getReviewTypeLabel(request.reviewType);
+  const targetDiff = request.reviewPackage?.target.content ?? formattedDiff;
+  const supportingContext = request.reviewPackage?.supportingContext.length
+    ? request.reviewPackage.supportingContext
+      .map((item) => `Related file: ${item.filePath}\nReason: ${item.reason}\n${item.content}`)
+      .join('\n\n')
+    : request.crossFileContext;
+  const contextSection = supportingContext
+    ? `Relevant related context for this review:\n${supportingContext}\n\n`
+    : '';
+  const reviewOnlySection = request.reviewPackage?.strictReviewOnly
+    ? `Review-only boundary:
+- Review only the supplied diff and supporting context.
+- Do NOT inspect other files.
+- Do NOT search the repository.
+- Do NOT run commands or gather additional context.
+- If the supplied material is insufficient to support a confident finding, do not report that finding.\n\n`
+    : '';
 
   const basePrompt = `Review the following ${reviewTypeLabel}. The diff is formatted with line numbers for accurate reference:
 
-<diff>
-${formattedDiff}
+${reviewOnlySection}${contextSection}<diff>
+${targetDiff}
 </diff>
 
 When reporting issues:
 1. Use the line numbers shown in the diff (the numbers before each line of code)
 2. Include the file path for each issue (from the diff header like "diff --git a/path/to/file.ts b/path/to/file.ts")
-3. Provide your review as a JSON array with required fields: file, line, message, severity
+3. Provide your review as a JSON array with required fields: file, line, message, severity, evidence
 4. Ensure you understand the changes before reviewing`;
 
   const guidelines = `## Review Guidelines
@@ -46,6 +63,7 @@ Do NOT:
 - Make suggestions without checking if the pattern exists elsewhere
 - Report issues that are handled by the callers
 - Make any code change or edit file
+- Inspect other files, search the repository, or gather additional context beyond what was supplied
 - Ignore whitespace-only changes or pure formatting changes in diffs
 - Report issues on unchanged lines from the old code. Only report on lines that appear in the diff.
 - Include markdown code fences around the final JSON output
@@ -65,8 +83,10 @@ Each comment in the array must have:
 - \`message\`: A clear explanation of WHY it's a problem. Do not repeat the title.
 - \`fix\`: (optional) The exact replacement/additional code only. Do not put prose, markdown, or explanation in \`fix\`.
 - \`severity\`: One of "error", "warning", "info", or "suggestion"
+- \`evidence\`: Non-empty array of exact quoted code/context snippets that support the finding. Each item must include \`file\`, optional \`line\`, \`quote\`, and optional \`reason\`.
 
-CRITICAL: Always include the \`file\` field with the relative path from the repository root.`;
+CRITICAL: Always include the \`file\` field with the relative path from the repository root.
+CRITICAL: Do not report a finding unless its \`evidence[].quote\` appears verbatim in the supplied diff or context.`;
 
   return {
     prompt: `${basePrompt}
@@ -88,8 +108,6 @@ function getReviewTypeLabel(reviewType: string): string {
       return 'changes from the last commit';
     case 'branch':
       return 'branch changes compared to base';
-    case 'pullRequest':
-      return 'pull request changes';
     default:
       return 'git changes';
   }

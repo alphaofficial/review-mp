@@ -5,7 +5,7 @@ import { extractTextFromNdJson, validateComments } from '../harness/outputParser
 
 export interface NormalizationContext {
   defaultFilePath: string;
-  reviewType: 'file' | 'selection' | 'staged' | 'uncommitted' | 'lastCommit' | 'branch' | 'pullRequest';
+  reviewType: 'file' | 'selection' | 'staged' | 'uncommitted' | 'lastCommit' | 'branch';
 }
 
 export interface OutputNormalizer {

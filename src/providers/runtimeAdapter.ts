@@ -107,14 +107,29 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
   }
 
   private buildPrompt(request: ReviewRequest): { prompt: string; systemGuidelines: string } {
-    if (request.reviewType === 'file') {
-      return buildFileReviewPrompt(request);
-    } else if (request.reviewType === 'selection') {
-      return buildSelectionReviewPrompt(request, request.startLine ?? 0);
-    } else {
-      const formattedDiff = request.diff ? formatDiffWithLineNumbers(request.diff) : '';
-      return buildDiffReviewPrompt(request, formattedDiff);
+    const promptResult = request.reviewType === 'file'
+      ? buildFileReviewPrompt(request)
+      : request.reviewType === 'selection'
+        ? buildSelectionReviewPrompt(request, request.startLine ?? 0)
+        : buildDiffReviewPrompt(request, request.diff ? formatDiffWithLineNumbers(request.diff) : '');
+
+    if (this.manifest.id === 'codex') {
+      return {
+        ...promptResult,
+        prompt: [
+          'REVIEW-ONLY MODE',
+          'Review only the supplied target and supplied supporting context.',
+          'Do not inspect other files.',
+          'Do not search the repository.',
+          'Do not run commands or gather additional context.',
+          'If the supplied material is insufficient, return no finding rather than exploring.',
+          '',
+          promptResult.prompt,
+        ].join('\n'),
+      };
     }
+
+    return promptResult;
   }
 
   private async invokeWithArgv(
@@ -235,6 +250,7 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
     let stderrChunks = 0;
     const startedAt = Date.now();
     let settled = false;
+    const cleanupDisposables: vscode.Disposable[] = [];
     const heartbeat = setInterval(() => {
       this.debugLog('Runtime still running', {
         pid: proc.pid,
@@ -246,7 +262,6 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
       });
     }, 5000);
     heartbeat.unref();
-    let cancellationSubscription: vscode.Disposable | undefined;
 
     this.debugLog('Runtime process started', {
       pid: proc.pid,
@@ -282,7 +297,9 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
 
       settled = true;
       clearInterval(heartbeat);
-      cancellationSubscription?.dispose();
+      for (const disposable of cleanupDisposables) {
+        disposable.dispose();
+      }
       if (this.currentProcess === proc) {
         this.currentProcess = null;
       }
@@ -301,7 +318,10 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
       proc.kill();
       reject(new Error('Review cancelled'));
     };
-    cancellationSubscription = this.cancellationToken?.onCancellationRequested(cancelHandler);
+    const cancellationSubscription = this.cancellationToken?.onCancellationRequested(cancelHandler);
+    if (cancellationSubscription) {
+      cleanupDisposables.push(cancellationSubscription);
+    }
 
     proc.on('close', (code, signal) => {
       if (!cleanup()) {

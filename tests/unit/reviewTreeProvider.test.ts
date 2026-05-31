@@ -83,6 +83,33 @@ import { ReviewTreeProvider, ReviewTreeViewId, TreeElement } from '../../src/rev
 import { createReviewSessionStore, resetReviewSessionStore, ReviewSessionStore } from '../../src/store/reviewSessionStore';
 import { ReviewStatus } from '../../src/types/review';
 
+function transitionSessionTo(store: ReviewSessionStore, status: ReviewStatus): void {
+  switch (status) {
+    case 'idle':
+      return;
+    case 'settingUp':
+      store.transitionSession('startSetup');
+      return;
+    case 'analyzing':
+      store.transitionSession('startSetup');
+      store.transitionSession('beginAnalysis');
+      return;
+    case 'reviewing':
+      store.transitionSession('startSetup');
+      store.transitionSession('beginAnalysis');
+      store.transitionSession('beginReview');
+      return;
+    case 'completed':
+      store.transitionSession('startSetup');
+      store.transitionSession('beginAnalysis');
+      store.transitionSession('complete');
+      return;
+    case 'failed':
+      store.setSessionError('Test failure');
+      return;
+  }
+}
+
 describe('ReviewTreeProvider', () => {
   let store: ReviewSessionStore;
   let newReviewProvider: ReviewTreeProvider;
@@ -180,6 +207,16 @@ describe('ReviewTreeProvider', () => {
       expect(items[0].label).toBe('No files to review');
     });
 
+    it('should list seeded files even before findings are added', () => {
+      store.createSession('staged');
+      store.setFilesToReview(['/src/a.ts', '/src/b.ts']);
+
+      const items = filesProvider.getChildren() as TreeElement[];
+      expect(items).toHaveLength(2);
+      const paths = items.map(i => i.file?.path).sort();
+      expect(paths).toEqual(['/src/a.ts', '/src/b.ts']);
+    });
+
     it('should list all files from active session', () => {
       store.createSession('branch');
       store.addFinding('/src/file1.ts', 1, 'Error 1', 'error');
@@ -230,7 +267,7 @@ describe('ReviewTreeProvider', () => {
 
     it('should show session header with title and status', () => {
       store.createSession('file', 'My Review');
-      store.updateSessionStatus('reviewing');
+      transitionSessionTo(store, 'reviewing');
 
       const items = reviewsProvider.getChildren() as TreeElement[];
       expect(items).toHaveLength(1);
@@ -249,6 +286,16 @@ describe('ReviewTreeProvider', () => {
       expect(items[0].label).toBe('Branch Review: current');
       expect(items[0].description).toContain('3 findings');
       expect(getReviewFileItems()).toHaveLength(2);
+    });
+
+    it('should not show seeded files without findings in the review files section', () => {
+      store.createSession('staged');
+      store.setFilesToReview(['/src/a.ts', '/src/b.ts']);
+
+      const items = reviewsProvider.getChildren() as TreeElement[];
+      expect(items).toHaveLength(1);
+      const sessionChildren = items[0].children ?? [];
+      expect(sessionChildren.some((child) => child.label.startsWith('Files ('))).toBe(false);
     });
 
     it('should show finding severity and line number in files view', () => {
@@ -301,7 +348,7 @@ describe('ReviewTreeProvider', () => {
 
       (Object.keys(statusLabels) as Array<keyof typeof statusLabels>).forEach(status => {
         store.createSession('file');
-        store.updateSessionStatus(status);
+        transitionSessionTo(store, status);
 
         const items = reviewsProvider.getChildren() as TreeElement[];
         expect(items[0].description).toContain(statusLabels[status]);
@@ -330,11 +377,11 @@ describe('ReviewTreeProvider', () => {
     it('should list completed sessions from history', () => {
       store.createSession('staged', 'Review 1');
       store.addFinding('/src/test.ts', 1, 'Error', 'error');
-      store.updateSessionStatus('completed');
+      transitionSessionTo(store, 'completed');
 
       store.createSession('branch', 'Review 2');
       store.addFinding('/src/test.ts', 1, 'Error', 'error');
-      store.updateSessionStatus('completed');
+      transitionSessionTo(store, 'completed');
 
       const items = previousReviewsProvider.getChildren() as TreeElement[];
       expect(items).toHaveLength(2);
@@ -344,7 +391,7 @@ describe('ReviewTreeProvider', () => {
 
     it('should have open review panel command on history entries', () => {
       store.createSession('file', 'Historical Review');
-      store.updateSessionStatus('completed');
+      transitionSessionTo(store, 'completed');
 
       const items = previousReviewsProvider.getChildren() as TreeElement[];
       expect(items[0].command?.command).toBe('reviewmp.openReviewPanel');
@@ -353,7 +400,7 @@ describe('ReviewTreeProvider', () => {
 
     it('should store history entry data in tree element', () => {
       store.createSession('file', 'Test Review');
-      store.updateSessionStatus('completed');
+      transitionSessionTo(store, 'completed');
 
       const items = previousReviewsProvider.getChildren() as TreeElement[];
       expect(items[0].historyEntry).toBeDefined();
@@ -363,7 +410,7 @@ describe('ReviewTreeProvider', () => {
     it('should limit history display', () => {
       for (let i = 0; i < 12; i++) {
         store.createSession('file', `Review ${i}`);
-        store.updateSessionStatus('completed');
+        transitionSessionTo(store, 'completed');
       }
 
       const items = previousReviewsProvider.getChildren() as TreeElement[];
@@ -375,7 +422,7 @@ describe('ReviewTreeProvider', () => {
       store.addFinding('/src/test1.ts', 1, 'Error 1', 'error');
       store.addFinding('/src/test2.ts', 5, 'Error 2', 'warning');
       store.addFinding('/src/test3.ts', 10, 'Error 3', 'info');
-      store.updateSessionStatus('completed');
+      transitionSessionTo(store, 'completed');
 
       const items = previousReviewsProvider.getChildren() as TreeElement[];
       expect(items[0].description).toContain('3 findings');
@@ -383,7 +430,7 @@ describe('ReviewTreeProvider', () => {
 
     it('should display relative time in history label', () => {
       store.createSession('file', 'Dated Review');
-      store.updateSessionStatus('completed');
+      transitionSessionTo(store, 'completed');
 
       const items = previousReviewsProvider.getChildren() as TreeElement[];
       expect(items[0].description).toContain('ago');
@@ -391,7 +438,7 @@ describe('ReviewTreeProvider', () => {
 
     it('should display duration in history label', () => {
       store.createSession('file', 'Timed Review');
-      store.updateSessionStatus('completed');
+      transitionSessionTo(store, 'completed');
 
       const items = previousReviewsProvider.getChildren() as TreeElement[];
       expect(items[0].description).toContain('ms');
@@ -405,7 +452,7 @@ describe('ReviewTreeProvider', () => {
       previousReviewsProvider.dispose();
       previousReviewsProvider = new ReviewTreeProvider('reviewmp.previousReviews', store);
       store.createSession('file');
-      store.updateSessionStatus('completed');
+      transitionSessionTo(store, 'completed');
 
       const spy = vi.fn();
       previousReviewsProvider.onDidChangeTreeData(spy);
@@ -460,13 +507,13 @@ describe('ReviewTreeProvider', () => {
 
     it('should emit change event on session completion', () => {
       store.createSession('file');
-      store.updateSessionStatus('completed');
+      transitionSessionTo(store, 'completed');
 
       const spy = vi.fn();
       previousReviewsProvider.onDidChangeTreeData(spy);
 
       store.createSession('file');
-      store.updateSessionStatus('completed');
+      transitionSessionTo(store, 'completed');
 
       expect(spy).toHaveBeenCalled();
     });

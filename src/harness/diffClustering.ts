@@ -1,4 +1,12 @@
+import path from 'node:path';
 import { DiffResult } from './diffContextCollector';
+
+export type DiffReviewability =
+  | 'reviewable'
+  | 'non-code'
+  | 'generated'
+  | 'dependency-lockfile'
+  | 'binary';
 
 export interface FileDiff {
   filePath: string;
@@ -6,6 +14,8 @@ export interface FileDiff {
   newPath?: string;
   hunks: DiffHunk[];
   rawDiff: string;
+  reviewability: DiffReviewability;
+  skipReason?: string;
 }
 
 export interface DiffHunk {
@@ -34,6 +44,76 @@ export interface ClusteringResult {
 const MAX_CLUSTER_SIZE = 10;
 const SMALL_PR_FILE_COUNT = 3;
 const SMALL_PR_LINE_COUNT = 500;
+const REVIEWABLE_EXTENSIONS = new Set([
+  '.c',
+  '.cc',
+  '.cpp',
+  '.cs',
+  '.css',
+  '.dart',
+  '.go',
+  '.graphql',
+  '.gql',
+  '.h',
+  '.hpp',
+  '.html',
+  '.ini',
+  '.java',
+  '.js',
+  '.json',
+  '.jsx',
+  '.kt',
+  '.kts',
+  '.m',
+  '.mm',
+  '.php',
+  '.py',
+  '.rb',
+  '.rs',
+  '.scss',
+  '.sh',
+  '.sql',
+  '.swift',
+  '.toml',
+  '.ts',
+  '.tsx',
+  '.vue',
+  '.xml',
+  '.yaml',
+  '.yml',
+  '.zsh',
+]);
+const NON_CODE_EXTENSIONS = new Set([
+  '.bmp',
+  '.csv',
+  '.gif',
+  '.ico',
+  '.jpeg',
+  '.jpg',
+  '.md',
+  '.pdf',
+  '.png',
+  '.svg',
+  '.txt',
+  '.webp',
+  '.woff',
+  '.woff2',
+]);
+const GENERATED_PATH_PATTERNS = [
+  /(^|\/)__snapshots__(\/|$)/,
+  /(^|\/)(coverage|dist|build)(\/|$)/,
+  /\.generated\./,
+  /\.gen\./,
+  /\.min\./,
+  /\.pb\./,
+];
+const DEPENDENCY_LOCKFILE_PATTERNS = [
+  /(^|\/)package-lock\.json$/,
+  /(^|\/)pnpm-lock\.yaml$/,
+  /(^|\/)yarn\.lock$/,
+  /(^|\/)Cargo\.lock$/,
+  /(^|\/)Podfile\.lock$/,
+];
 
 export function parseDiffIntoFiles(diffOutput: string): FileDiff[] {
   const files: FileDiff[] = [];
@@ -59,6 +139,7 @@ export function parseDiffIntoFiles(diffOutput: string): FileDiff[] {
         filePath: match ? match[2] : '',
         hunks: [],
         rawDiff: line + '\n',
+        reviewability: 'reviewable',
       };
       currentHunk = null;
       currentHunkLines = [];
@@ -109,7 +190,68 @@ export function parseDiffIntoFiles(diffOutput: string): FileDiff[] {
     files.push(currentFile);
   }
 
-  return files;
+  return files.map((file) => ({
+    ...file,
+    ...classifyDiffFile(file.filePath, file.rawDiff),
+  }));
+}
+
+export function isReviewableDiffFile(fileDiff: FileDiff): boolean {
+  return fileDiff.reviewability === 'reviewable';
+}
+
+export function classifyDiffFile(
+  filePath: string,
+  rawDiff: string
+): Pick<FileDiff, 'reviewability' | 'skipReason'> {
+  const normalizedPath = filePath.replace(/^\/+/, '');
+  const lowerPath = normalizedPath.toLowerCase();
+  const extension = path.posix.extname(lowerPath);
+
+  if (rawDiff.includes('Binary files') || rawDiff.includes('(binary file or no changes)')) {
+    return {
+      reviewability: 'binary',
+      skipReason: 'binary or non-text diff',
+    };
+  }
+
+  if (DEPENDENCY_LOCKFILE_PATTERNS.some((pattern) => pattern.test(normalizedPath))) {
+    return {
+      reviewability: 'dependency-lockfile',
+      skipReason: 'dependency lockfile',
+    };
+  }
+
+  if (GENERATED_PATH_PATTERNS.some((pattern) => pattern.test(normalizedPath))) {
+    return {
+      reviewability: 'generated',
+      skipReason: 'generated artifact',
+    };
+  }
+
+  if (NON_CODE_EXTENSIONS.has(extension)) {
+    return {
+      reviewability: 'non-code',
+      skipReason: `non-code ${extension || 'asset'} file`,
+    };
+  }
+
+  if (REVIEWABLE_EXTENSIONS.has(extension)) {
+    return {
+      reviewability: 'reviewable',
+    };
+  }
+
+  if (!extension) {
+    return {
+      reviewability: 'reviewable',
+    };
+  }
+
+  return {
+    reviewability: 'non-code',
+    skipReason: `non-reviewable ${extension} file`,
+  };
 }
 
 export function countDiffLines(fileDiffs: FileDiff[]): number {
@@ -167,7 +309,8 @@ export function buildImportGraph(fileDiffs: FileDiff[]): Map<string, Set<string>
 function normalizeImportPath(importPath: string, fromFile: string): string {
   if (importPath.startsWith('.')) {
     const baseDir = fromFile.includes('/') ? fromFile.substring(0, fromFile.lastIndexOf('/')) : '';
-    return baseDir ? `${baseDir}/${importPath}` : importPath;
+    const relativePath = baseDir ? `${baseDir}/${importPath}` : importPath;
+    return path.posix.normalize(relativePath);
   }
   return importPath;
 }
