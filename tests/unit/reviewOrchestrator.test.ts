@@ -644,6 +644,7 @@ const Swipeable = React.forwardRef(
       mockGetProvider = vi.fn().mockReturnValue(provider);
       orchestrator = new ReviewOrchestrator(mockGetProvider, controller, store);
       (orchestrator as any).diffCollector = {
+        getChangedFiles: vi.fn().mockResolvedValue(['src/a.ts', 'src/b.ts', 'src/c.ts']),
         getDiff: vi.fn().mockResolvedValue({
           diff: formattedDiff,
           formattedDiff,

@@ -314,7 +314,7 @@
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.30.0",
-    "apache-arrow": "^21.1.0",
+    "apache-arrow": "^18.1.0",
     "tree-sitter": "^0.25.0",
     "tree-sitter-c": "^0.24.1",
     "tree-sitter-c-sharp": "^0.23.5",
