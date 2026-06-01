@@ -39,7 +39,8 @@ export function buildFileReviewPackage(request: ReviewRequest, envelope?: Contex
 export function buildDiffReviewPackage(
   request: ReviewRequest,
   formattedDiff: string,
-  envelope?: ContextEnvelope
+  envelope?: ContextEnvelope,
+  changeBrief?: string
 ): ReviewPackage {
   return {
     reviewType: request.reviewType,
@@ -51,6 +52,7 @@ export function buildDiffReviewPackage(
       content: formattedDiff,
     },
     supportingContext: contextItems(envelope),
+    changeBrief,
     notes: [
       'Review only the supplied diff and supporting context.',
       'Do not inspect other files or search the repository.',

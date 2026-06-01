@@ -82,6 +82,7 @@ export interface ReviewEvidence {
 
 export type ReviewContextReason =
   | 'diff-manifest'
+  | 'change-map'
   | 'related-change'
   | 'recent-change'
   | 'existing-finding'
@@ -115,6 +116,7 @@ export interface ReviewPackage {
   scopeLabel: string;
   target: ReviewTarget;
   supportingContext: ReviewContextItem[];
+  changeBrief?: string;
   notes?: string[];
 }
 

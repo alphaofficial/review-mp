@@ -7,6 +7,7 @@ export interface Settings {
   autoReviewOnStage: boolean;
   autoReviewOnCommit: boolean;
   codeIndexEnabled: boolean;
+  reviewConcurrency: number;
   executableOverride: string;
   extraArgs: string;
 }
@@ -23,9 +24,18 @@ export function getSettings(): Settings {
     autoReviewOnStage: config?.get<boolean>('autoReviewOnStage', false) ?? false,
     autoReviewOnCommit: config?.get<boolean>('autoReviewOnCommit', false) ?? false,
     codeIndexEnabled: config?.get<boolean>('codeIndexEnabled', true) ?? true,
+    reviewConcurrency: clampInteger(config?.get<number>('reviewConcurrency', 5) ?? 5, 1, 20),
     executableOverride: config?.get<string>('executableOverride', '') ?? '',
     extraArgs: config?.get<string>('extraArgs', '') ?? '',
   };
+}
+
+function clampInteger(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+
+  return Math.min(max, Math.max(min, Math.trunc(value)));
 }
 
 export async function setRuntime(runtime: RuntimeId): Promise<void> {

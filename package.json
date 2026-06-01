@@ -274,6 +274,13 @@
           "default": true,
           "description": "Enable background repository indexing for review memory and related-code retrieval"
         },
+        "reviewmp.reviewConcurrency": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Maximum number of file review scopes to run in parallel"
+        },
         "reviewmp.executableOverride": {
           "type": "string",
           "default": "",

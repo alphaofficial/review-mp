@@ -16,6 +16,12 @@ export function buildDiffReviewPrompt(request: ReviewRequest, formattedDiff: str
   const contextSection = supportingContext
     ? `Relevant related context for this review:\n${supportingContext}\n\n`
     : '';
+  const changeBriefSection = request.reviewPackage?.changeBrief
+    ? `Review-level change brief (hypothesis, not evidence):
+${request.reviewPackage.changeBrief}
+
+Use this brief to focus the review, but prefer the supplied code, diff, and related context when they conflict. Do not cite the brief as evidence.\n\n`
+    : '';
   const reviewOnlySection = request.reviewPackage?.strictReviewOnly
     ? `Review-only boundary:
 - Review only the supplied diff and supporting context.
@@ -27,7 +33,7 @@ export function buildDiffReviewPrompt(request: ReviewRequest, formattedDiff: str
 
   const basePrompt = `Review the following ${reviewTypeLabel}. The diff is formatted with line numbers for accurate reference:
 
-${reviewOnlySection}${contextSection}<diff>
+${reviewOnlySection}${changeBriefSection}${contextSection}<diff>
 ${targetDiff}
 </diff>
 
@@ -42,7 +48,7 @@ When reporting issues:
 Focus on:
 - Review adversarially: look for ways the change can fail while preserving the author's original intent
 - Opportunities to reduce layers, remove unnecessary complexity, and increase reliability
-- Repo-wide policies and established behavior that must remain consistent
+- Repo-wide style, policies and established patterns and behavior that must remain consistent
 - Bugs and logic errors in the context of how the code is used
 - Off by one mistakes, incorrect conditionals
 - Missing guards, unreachable code paths

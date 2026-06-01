@@ -15,7 +15,6 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
   private readonly model: string | undefined;
   private readonly executableOverride: string | undefined;
   private readonly extraArgs: string[] | undefined;
-  private readonly debug: boolean;
 
   constructor(
     manifest: RuntimeManifest,
@@ -27,7 +26,6 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
     this.model = settings.model;
     this.executableOverride = settings.executableOverride;
     this.extraArgs = settings.extraArgs;
-    this.debug = settings.debug ?? false;
   }
 
   async invoke(request: ReviewRequest, token?: vscode.CancellationToken): Promise<NormalizedReviewResult> {
@@ -36,31 +34,31 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
     const promptResult = this.buildPrompt(request);
     const executable = this.resolveExecutable();
 
-    if (this.debug) {
-      this.debugLog('Preparing runtime invocation', {
-        executable,
-        transport: this.manifest.promptTransport,
-        outputFormat: this.manifest.outputFormat,
-        workspaceRoot: this.workspaceRoot,
-        reviewType: request.reviewType,
-        filePath: request.filePath,
-        promptLength: promptResult.prompt.length,
-        prePromptArgs: this.manifest.prePromptArgs ?? [],
-        extraArgs: this.extraArgs ?? [],
-        model: this.model || undefined,
-      });
-    }
-
     return this.manifest.promptTransport === 'stdin'
       ? this.invokeWithStdin(executable, promptResult.prompt, request)
       : this.invokeWithArgv(executable, promptResult.prompt, request);
   }
 
+  async generateChangeBrief(prompt: string, token?: vscode.CancellationToken): Promise<string> {
+    this.cancellationToken = token;
+    const executable = this.resolveExecutable();
+    const effectivePrompt = this.manifest.id === 'codex'
+      ? [
+          'PROMPT-ONLY MODE',
+          'Use only the supplied prompt content.',
+          'Do not inspect files, search the repository, or run commands.',
+          '',
+          prompt,
+        ].join('\n')
+      : prompt;
+
+    return this.manifest.promptTransport === 'stdin'
+      ? this.invokeRawWithStdin(executable, effectivePrompt)
+      : this.invokeRawWithArgv(executable, effectivePrompt);
+  }
+
   cancel(): void {
     if (this.currentProcess) {
-      this.debugLog('Cancelling runtime process', {
-        pid: this.currentProcess.pid,
-      });
       this.currentProcess.kill();
       this.currentProcess = null;
     }
@@ -139,11 +137,6 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
   ): Promise<NormalizedReviewResult> {
     return new Promise((resolve, reject) => {
       const args = this.buildArgvArgs(prompt);
-      this.debugLog('Spawning argv runtime', {
-        executable,
-        args,
-        cwd: this.workspaceRoot,
-      });
 
       this.currentProcess = spawn(executable, args, {
         cwd: this.workspaceRoot,
@@ -155,6 +148,23 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
     });
   }
 
+  private async invokeRawWithArgv(
+    executable: string,
+    prompt: string
+  ): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const args = this.buildArgvArgs(prompt);
+
+      this.currentProcess = spawn(executable, args, {
+        cwd: this.workspaceRoot,
+        env: this.buildChildEnv(),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      this.collectRawOutput(resolve, reject);
+    });
+  }
+
   private async invokeWithStdin(
     executable: string,
     prompt: string,
@@ -162,12 +172,6 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
   ): Promise<NormalizedReviewResult> {
     return new Promise((resolve, reject) => {
       const args = this.buildStdinArgs();
-      this.debugLog('Spawning stdin runtime', {
-        executable,
-        args,
-        cwd: this.workspaceRoot,
-        promptLength: prompt.length,
-      });
 
       this.currentProcess = spawn(executable, args, {
         cwd: this.workspaceRoot,
@@ -175,14 +179,30 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
-      this.debugLog('Writing prompt to stdin', {
-        executable,
-        promptLength: prompt.length,
-      });
       this.currentProcess.stdin?.write(prompt);
       this.currentProcess.stdin?.end();
 
       this.collectOutput(resolve, reject, request);
+    });
+  }
+
+  private async invokeRawWithStdin(
+    executable: string,
+    prompt: string
+  ): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const args = this.buildStdinArgs();
+
+      this.currentProcess = spawn(executable, args, {
+        cwd: this.workspaceRoot,
+        env: this.buildChildEnv(),
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      this.currentProcess.stdin?.write(prompt);
+      this.currentProcess.stdin?.end();
+
+      this.collectRawOutput(resolve, reject);
     });
   }
 
@@ -246,48 +266,15 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
 
     let stdout = '';
     let stderr = '';
-    let stdoutChunks = 0;
-    let stderrChunks = 0;
-    const startedAt = Date.now();
     let settled = false;
     const cleanupDisposables: vscode.Disposable[] = [];
-    const heartbeat = setInterval(() => {
-      this.debugLog('Runtime still running', {
-        pid: proc.pid,
-        elapsedMs: Date.now() - startedAt,
-        stdoutBytes: stdout.length,
-        stderrBytes: stderr.length,
-        stdoutChunks,
-        stderrChunks,
-      });
-    }, 5000);
-    heartbeat.unref();
-
-    this.debugLog('Runtime process started', {
-      pid: proc.pid,
-    });
 
     proc.stdout?.on('data', (data) => {
       stdout += data.toString();
-      stdoutChunks++;
-      this.debugLog('Received stdout chunk', {
-        pid: proc.pid,
-        chunkBytes: data.length,
-        totalStdoutBytes: stdout.length,
-        stdoutChunks,
-      });
     });
 
     proc.stderr?.on('data', (data) => {
       stderr += data.toString();
-      stderrChunks++;
-      this.debugLog('Received stderr chunk', {
-        pid: proc.pid,
-        chunkBytes: data.length,
-        totalStderrBytes: stderr.length,
-        stderrChunks,
-        preview: data.toString().slice(0, 200),
-      });
     });
 
     const cleanup = (): boolean => {
@@ -296,7 +283,6 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
       }
 
       settled = true;
-      clearInterval(heartbeat);
       for (const disposable of cleanupDisposables) {
         disposable.dispose();
       }
@@ -311,10 +297,6 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
         return;
       }
 
-      this.debugLog('Runtime cancelled', {
-        pid: proc.pid,
-        elapsedMs: Date.now() - startedAt,
-      });
       proc.kill();
       reject(new Error('Review cancelled'));
     };
@@ -328,17 +310,6 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
         return;
       }
 
-      this.debugLog('Runtime process closed', {
-        pid: proc.pid,
-        code,
-        signal,
-        elapsedMs: Date.now() - startedAt,
-        stdoutBytes: stdout.length,
-        stderrBytes: stderr.length,
-        stdoutChunks,
-        stderrChunks,
-      });
-
       if (code !== 0 && code !== null) {
         const errorOutput = stderr.trim() || stdout.trim() || 'No output';
         reject(new Error(`${this.manifest.name} exited with code ${code}: ${errorOutput}`));
@@ -347,10 +318,6 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
 
       try {
         const result = this.normalizeOutput(stdout, request);
-        this.debugLog('Runtime output normalized', {
-          pid: proc.pid,
-          comments: result.comments.length,
-        });
         resolve(result);
       } catch (error) {
         reject(new Error(`Failed to parse review output: ${error}`));
@@ -362,11 +329,80 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
         return;
       }
 
-      this.debugLog('Runtime process error', {
-        pid: proc.pid,
-        message: error.message,
-        elapsedMs: Date.now() - startedAt,
-      });
+      reject(new Error(`Failed to start ${this.manifest.name}: ${error.message}`));
+    });
+  }
+
+  private collectRawOutput(
+    resolve: (result: string) => void,
+    reject: (error: Error) => void
+  ): void {
+    const proc = this.currentProcess;
+    if (!proc) {
+      reject(new Error('No process spawned'));
+      return;
+    }
+
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const cleanupDisposables: vscode.Disposable[] = [];
+
+    proc.stdout?.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr?.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    const cleanup = (): boolean => {
+      if (settled) {
+        return false;
+      }
+
+      settled = true;
+      for (const disposable of cleanupDisposables) {
+        disposable.dispose();
+      }
+      if (this.currentProcess === proc) {
+        this.currentProcess = null;
+      }
+      return true;
+    };
+
+    const cancelHandler = () => {
+      if (!cleanup()) {
+        return;
+      }
+
+      proc.kill();
+      reject(new Error('Review cancelled'));
+    };
+    const cancellationSubscription = this.cancellationToken?.onCancellationRequested(cancelHandler);
+    if (cancellationSubscription) {
+      cleanupDisposables.push(cancellationSubscription);
+    }
+
+    proc.on('close', (code) => {
+      if (!cleanup()) {
+        return;
+      }
+
+      if (code !== 0 && code !== null) {
+        const errorOutput = stderr.trim() || stdout.trim() || 'No output';
+        reject(new Error(`${this.manifest.name} exited with code ${code}: ${errorOutput}`));
+        return;
+      }
+
+      resolve(stdout.trim());
+    });
+
+    proc.on('error', (error) => {
+      if (!cleanup()) {
+        return;
+      }
+
       reject(new Error(`Failed to start ${this.manifest.name}: ${error.message}`));
     });
   }
@@ -390,17 +426,4 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
     };
   }
 
-  private debugLog(message: string, data?: unknown): void {
-    if (!this.debug) {
-      return;
-    }
-
-    const timestamp = new Date().toISOString();
-    if (data === undefined) {
-      console.log(`[ReviewMP DEBUG ${timestamp}] [RuntimeAdapter:${this.manifest.id}] ${message}`);
-      return;
-    }
-
-    console.log(`[ReviewMP DEBUG ${timestamp}] [RuntimeAdapter:${this.manifest.id}] ${message}`, data);
-  }
 }

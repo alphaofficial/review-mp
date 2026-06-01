@@ -214,6 +214,8 @@ export async function buildPreparedDiffContextEnvelope(
 
   const manifest = buildDiffManifestContext(runContext, input.primaryFiles);
   relatedFiles.set(manifest.filePath, manifest);
+  const changeMap = buildChangedFileMapContext(runContext);
+  relatedFiles.set(changeMap.filePath, changeMap);
 
   for (const primaryFile of input.primaryFiles) {
     const neighbors = runContext.graph.get(primaryFile);
@@ -496,6 +498,43 @@ function buildDiffManifestContext(
     reason: 'diff-manifest',
     content: lines.join('\n'),
   };
+}
+
+function buildChangedFileMapContext(runContext: PreparedDiffReviewContext): ContextFile {
+  const lines = [
+    'Change map',
+  ];
+
+  for (const fileDiff of runContext.fileDiffs) {
+    const neighbors = [
+      ...new Set([
+        ...Array.from(runContext.graph.get(fileDiff.filePath) ?? []),
+        ...getIncomingChangedNeighbors(runContext.graph, fileDiff.filePath),
+      ]),
+    ].filter((neighbor) => neighbor !== fileDiff.filePath);
+
+    lines.push(`- ${fileDiff.filePath}`);
+    if (neighbors.length > 0) {
+      lines.push(`  related: ${neighbors.join(', ')}`);
+    }
+  }
+
+  return {
+    filePath: '(changed file map)',
+    reason: 'change-map',
+    content: lines.join('\n'),
+  };
+}
+
+function getIncomingChangedNeighbors(graph: Map<string, Set<string>>, targetFilePath: string): string[] {
+  const neighbors: string[] = [];
+  for (const [sourceFilePath, targets] of graph.entries()) {
+    if (targets.has(targetFilePath)) {
+      neighbors.push(sourceFilePath);
+    }
+  }
+
+  return neighbors;
 }
 
 function isCodeLanguage(languageId: string): boolean {

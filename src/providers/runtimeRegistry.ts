@@ -36,6 +36,7 @@ export interface NormalizedReviewResult {
 export interface RuntimeAdapter {
   manifest: RuntimeManifest;
   invoke(request: ReviewRequest): Promise<NormalizedReviewResult>;
+  generateChangeBrief(prompt: string): Promise<string>;
   cancel(): void;
   isAvailable(): Promise<boolean>;
 }
@@ -43,7 +44,6 @@ export interface RuntimeAdapter {
 export interface RuntimeSettings {
   runtime: RuntimeId;
   model?: string;
-  debug?: boolean;
   autoReviewOnStage?: boolean;
   autoReviewOnCommit?: boolean;
   executableOverride?: string;

@@ -41,6 +41,10 @@ class RuntimeProviderAdapter implements ModelProvider {
     };
   }
 
+  async generateChangeBrief(prompt: string, token?: vscode.CancellationToken): Promise<string> {
+    return this.adapter.generateChangeBrief(prompt, token);
+  }
+
   cancel(): void {
     this.adapter.cancel();
   }
@@ -89,7 +93,6 @@ export function activate(context: vscode.ExtensionContext) {
       const currentRuntimeSettings: RuntimeSettings = {
         runtime: currentSettings.runtime,
         model: currentSettings.model,
-        debug: true,
         autoReviewOnStage: currentSettings.autoReviewOnStage,
         autoReviewOnCommit: currentSettings.autoReviewOnCommit,
         executableOverride: currentSettings.executableOverride || undefined,

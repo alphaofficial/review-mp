@@ -149,6 +149,30 @@ export class ReviewSessionStore extends EventEmitter {
     });
   }
 
+  setReviewFiles(filePaths: string[]): void {
+    if (!this.activeSession) {
+      return;
+    }
+
+    const uniqueFilePaths = [...new Set(filePaths.filter(filePath => filePath.trim().length > 0))];
+    const nextFiles = new Map<string, ReviewFile>();
+    for (const filePath of uniqueFilePaths) {
+      const existingFile = this.activeSession.files.get(filePath);
+      nextFiles.set(filePath, existingFile ?? {
+        path: filePath,
+        status: 'pending',
+        findings: [],
+      });
+    }
+
+    this.activeSession.files = nextFiles;
+    this.emit('file-status-changed', {
+      sessionId: this.activeSession.id,
+      filePath: '',
+      status: 'pending',
+    });
+  }
+
   transitionSession(event: SessionTransitionEvent, error?: string): boolean {
     if (!this.activeSession) {
       return false;

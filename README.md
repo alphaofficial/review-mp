@@ -151,7 +151,8 @@ Example `settings.json`:
   "reviewmp.runtime": "claude",
   "reviewmp.model": "claude-sonnet-4-20250514",
   "reviewmp.autoReviewOnStage": true,
-  "reviewmp.autoReviewOnCommit": false
+  "reviewmp.autoReviewOnCommit": false,
+  "reviewmp.reviewConcurrency": 5
 }
 ```
 
@@ -163,6 +164,10 @@ Example `settings.json`:
 | `reviewmp.model` | (empty) | Model override. Leave empty for runtime default. |
 | `reviewmp.autoReviewOnStage` | `false` | Automatically review when files are staged |
 | `reviewmp.autoReviewOnCommit` | `false` | Prompt to review before commit |
+| `reviewmp.codeIndexEnabled` | `true` | Enable repository indexing for related-code retrieval and review memory |
+| `reviewmp.reviewConcurrency` | `5` | Maximum number of diff file review scopes to run in parallel |
+| `reviewmp.executableOverride` | (empty) | Override the selected runtime executable path |
+| `reviewmp.extraArgs` | (empty) | Additional arguments passed to the selected runtime |
 
 ### Runtime-Specific Settings
 
@@ -254,14 +259,15 @@ For `Review Current File`, the exact path is:
 10. `ReviewCommentController.addComments()` creates VS Code comment threads anchored to the target lines and renders the markdown/fix UI inline in [src/comments.ts](src/comments.ts).
 11. When the session completes, `ReviewKnowledgeRecorder` writes the exact review run and findings back into the local index, and if indexing is enabled it also writes semantic review memory for reuse later in [src/harness/reviewKnowledgeRecorder.ts](src/harness/reviewKnowledgeRecorder.ts).
 
-For `Review Staged Changes` / `Review Branch Changes`, the flow is the same until analysis, then it diverges:
+For `Review Staged Changes` / `Review Branch Changes`, the flow is the same until setup, then it diverges:
 
 1. `reviewStaged()` / `reviewBranch()` call `reviewGitChanges(...)` in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts) and [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
-2. The orchestrator asks `DiffContextCollector` for the diff, then calls `reviewPlannedDiff(...)` in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts) and [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
-3. `reviewPlannedDiff()` parses the diff into reviewable files, creates one scope per file, fingerprints the whole diff and each unit, and can reuse exact cached results at both the whole-review and per-file-scope level in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts) and [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
-4. It prepares diff context with import-graph neighbors, sibling tests, recent history, semantic matches, review memory, and repo summary in [src/harness/contextRetriever.ts](src/harness/contextRetriever.ts) and [src/harness/contextRetriever.ts](src/harness/contextRetriever.ts).
-5. Each scope is reviewed separately in `executeSingleDiffScope()` in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts), then the findings are deduped and severity-sorted by `synthesizeReviewComments(...)` in [src/harness/reviewSynthesizer.ts](src/harness/reviewSynthesizer.ts).
-6. `addDiffComments()` groups findings by file and renders inline comment threads into the real workspace files in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
+2. During setup, the orchestrator asks `DiffContextCollector` for changed file names and records them in the session so the `FILES` view can populate before deeper analysis starts.
+3. During analysis, the orchestrator asks `DiffContextCollector` for the full diff, then calls `reviewPlannedDiff(...)` in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts) and [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
+4. `reviewPlannedDiff()` parses the diff into final reviewable files, creates one scope per file, fingerprints the whole diff and each unit, and can reuse exact cached results at both the whole-review and per-file-scope level in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts) and [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
+5. It builds one shared diff context envelope with the diff manifest, change map, related retrieval context, review memory, and repo summary in [src/harness/contextRetriever.ts](src/harness/contextRetriever.ts). It then generates one review-level change brief from that shared context.
+6. File scopes are reviewed in parallel up to `reviewmp.reviewConcurrency`, each receiving its own target diff plus the shared context and change brief. Findings are deduped and severity-sorted by `synthesizeReviewComments(...)` in [src/harness/reviewSynthesizer.ts](src/harness/reviewSynthesizer.ts).
+7. `addDiffComments()` groups findings by file and renders inline comment threads into the real workspace files in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
 
 The UI state you see in the side panel is all store-driven. The `NEW REVIEW`, `FILES`, `REVIEWS`, and `PREVIOUS REVIEWS` trees read directly from `ReviewSessionStore` in [src/reviewTreeProvider.ts](src/reviewTreeProvider.ts). So the extension is effectively:
 

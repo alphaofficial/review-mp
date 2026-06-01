@@ -4,9 +4,9 @@ import { ReviewCommentController } from './comments';
 import { ReviewComment, ReviewRequest } from './types/review';
 import { DiffContextCollector } from './harness/diffContextCollector';
 import { ReviewSessionStore } from './store/reviewSessionStore';
-import { logDebug } from './settings';
-import { FileDiff, isReviewableDiffFile, parseDiffIntoFiles } from './harness/diffClustering';
-import { buildFileContextEnvelope, buildPreparedDiffContextEnvelope, prepareDiffReviewContext } from './harness/contextRetriever';
+import { getSettings, logDebug } from './settings';
+import { classifyDiffFile, FileDiff, isReviewableDiffFile, parseDiffIntoFiles } from './harness/diffClustering';
+import { buildFileContextEnvelope, buildPreparedDiffContextEnvelope, ContextEnvelope, prepareDiffReviewContext } from './harness/contextRetriever';
 import { filterUnsupportedFindings } from './harness/findingGrounding';
 import {
   computeDiffReviewFingerprint,
@@ -17,6 +17,7 @@ import {
 } from './harness/reviewFingerprint';
 import { synthesizeReviewComments } from './harness/reviewSynthesizer';
 import { buildDiffReviewPackage, buildFileReviewPackage } from './harness/reviewPackageBuilder';
+import { buildChangeBriefPrompt } from './harness/prompts';
 import { RepoKnowledgeIndex } from './harness/repoKnowledgeIndex';
 
 interface DiffFileReviewResult {
@@ -253,6 +254,24 @@ export class ReviewOrchestrator implements vscode.Disposable {
       },
       async (progress, token) => {
         try {
+            logDebug('Discovering files for review during setup', {
+              sessionId: session.id,
+              reviewType: type,
+            });
+            const setupFilePaths = await this.getSetupReviewFiles(type, token);
+            this.store.setReviewFiles(setupFilePaths);
+            logDebug('Discovered files for review', {
+              sessionId: session.id,
+              reviewType: type,
+              fileCount: setupFilePaths.length,
+              files: setupFilePaths.slice(0, 20),
+            });
+
+            if (token.isCancellationRequested) {
+              this.store.clearActiveSession();
+              return;
+            }
+
             this.store.transitionSession('beginAnalysis');
             logDebug('Collecting diff for review', {
               sessionId: session.id,
@@ -362,7 +381,7 @@ export class ReviewOrchestrator implements vscode.Disposable {
       skippedFileCount: plan.skippedFileCount,
       skippedFilesSample: plan.skippedFiles.slice(0, 8),
     });
-    this.store.setFilesToReview(plan.reviewableFiles.map((filePath) => this.resolveWorkspaceFilePath(filePath)));
+    this.store.setReviewFiles(plan.reviewableFiles.map((filePath) => this.resolveWorkspaceFilePath(filePath)));
     this.store.setSessionReviewMetadata({
       reviewFingerprint,
       reviewTargetKind: 'diff',
@@ -398,68 +417,150 @@ export class ReviewOrchestrator implements vscode.Disposable {
       formattedDiff,
       workspaceRoot,
     });
-
-    const commentGroups: ReviewComment[][] = [];
-    let providerName = '';
+    logDebug('Building review-level retrieval context', {
+      sessionId,
+      runId,
+      reviewType: type,
+      reviewableFileCount: plan.reviewableFiles.length,
+    });
+    const reviewContextEnvelope = await buildPreparedDiffContextEnvelope(runContext, {
+      primaryFiles: plan.reviewableFiles,
+    });
+    logDebug('Built review-level retrieval context', {
+      sessionId,
+      runId,
+      reviewType: type,
+      contextFileCount: reviewContextEnvelope.files.length,
+      contextChars: reviewContextEnvelope.totalChars,
+      contextReasons: summarizeContextReasons(reviewContextEnvelope),
+    });
+    const changeBrief = await this.buildReviewChangeBrief(
+      formattedDiff,
+      reviewContextEnvelope,
+      type,
+      runId,
+      sessionId,
+      token
+    );
 
     this.store.transitionSession('beginReview');
 
-    for (let index = 0; index < plan.scopes.length; index += 1) {
-      if (token?.isCancellationRequested) {
-        this.store.clearActiveSession();
-        return {
-          comments: [],
-          provider: providerName,
-        };
-      }
+    const scopeResults = await this.executeDiffScopes(
+      plan.scopes,
+      unitFingerprints,
+      type,
+      reviewContextEnvelope,
+      changeBrief,
+      runId,
+      sessionId,
+      token
+    );
 
-      const scope = plan.scopes[index];
-      logDebug('Invoking per-file diff review scope', {
-        sessionId,
-        runId,
-        reviewType: type,
-        scopeIndex: index,
-        scopeId: scope.id,
-        filePaths: scope.filePaths,
-      });
-
-      const result = await this.executeSingleDiffScope(
-        scope,
-        unitFingerprints[index],
-        type,
-        runContext,
-        runId,
-        sessionId,
-        token
-      );
-
-      if (!this.isRunCurrent(runId, sessionId)) {
-        logDebug('Ignoring stale per-file diff review scope result', {
-          sessionId,
-          runId,
-          reviewType: type,
-        });
-        return {
-          comments: [],
-          provider: providerName,
-        };
-      }
-
-      providerName = result.provider;
-      commentGroups.push(result.comments);
-
-      logDebug('Per-file diff review scope completed', {
-        sessionId,
-        runId,
-        reviewType: type,
-        scopeIndex: index,
-        commentCount: result.comments.length,
-      });
+    if (!this.isRunCurrent(runId, sessionId) || token?.isCancellationRequested) {
+      this.store.clearActiveSession();
+      return {
+        comments: [],
+        provider: scopeResults.provider,
+      };
     }
 
     return {
-      comments: synthesizeReviewComments(commentGroups),
-      provider: providerName,
+      comments: synthesizeReviewComments(scopeResults.commentGroups),
+      provider: scopeResults.provider,
+    };
+  }
+
+  private async getSetupReviewFiles(
+    type: 'staged' | 'uncommitted' | 'lastCommit' | 'branch',
+    token?: vscode.CancellationToken
+  ): Promise<string[]> {
+    const changedFiles = await this.diffCollector.getChangedFiles(type, token);
+    return changedFiles
+      .filter((filePath) => classifyDiffFile(filePath, '').reviewability === 'reviewable')
+      .map((filePath) => this.resolveWorkspaceFilePath(filePath));
+  }
+
+  private async executeDiffScopes(
+    scopes: DiffReviewScope[],
+    unitFingerprints: string[],
+    reviewType: 'staged' | 'uncommitted' | 'lastCommit' | 'branch',
+    reviewContextEnvelope: ContextEnvelope,
+    changeBrief: string | undefined,
+    runId: number,
+    sessionId: string,
+    token?: vscode.CancellationToken
+  ): Promise<{ commentGroups: ReviewComment[][]; provider: string }> {
+    const concurrency = Math.min(getSettings().reviewConcurrency, scopes.length);
+    const results = new Array<DiffFileReviewResult | undefined>(scopes.length);
+    let nextIndex = 0;
+
+    logDebug('Starting parallel diff scope review', {
+      sessionId,
+      runId,
+      reviewType,
+      scopeCount: scopes.length,
+      concurrency,
+    });
+
+    const runWorker = async (workerIndex: number): Promise<void> => {
+      while (nextIndex < scopes.length) {
+        if (token?.isCancellationRequested || !this.isRunCurrent(runId, sessionId)) {
+          return;
+        }
+
+        const scopeIndex = nextIndex;
+        nextIndex += 1;
+        const scope = scopes[scopeIndex];
+        logDebug('Invoking per-file diff review scope', {
+          sessionId,
+          runId,
+          reviewType,
+          workerIndex,
+          scopeIndex,
+          scopeId: scope.id,
+          filePaths: scope.filePaths,
+        });
+
+        const result = await this.executeSingleDiffScope(
+          scope,
+          unitFingerprints[scopeIndex],
+          reviewType,
+          reviewContextEnvelope,
+          changeBrief,
+          runId,
+          sessionId,
+          token
+        );
+
+        if (!this.isRunCurrent(runId, sessionId)) {
+          logDebug('Ignoring stale per-file diff review scope result', {
+            sessionId,
+            runId,
+            reviewType,
+            workerIndex,
+            scopeIndex,
+          });
+          return;
+        }
+
+        results[scopeIndex] = result;
+        logDebug('Per-file diff review scope completed', {
+          sessionId,
+          runId,
+          reviewType,
+          workerIndex,
+          scopeIndex,
+          commentCount: result.comments.length,
+        });
+      }
+    };
+
+    await Promise.all(Array.from({ length: concurrency }, (_, index) => runWorker(index)));
+
+    const completedResults = results.filter((result): result is DiffFileReviewResult => Boolean(result));
+    return {
+      commentGroups: completedResults.map((result) => result.comments),
+      provider: [...new Set(completedResults.map((result) => result.provider).filter(Boolean))].join(', '),
     };
   }
 
@@ -467,7 +568,8 @@ export class ReviewOrchestrator implements vscode.Disposable {
     scope: DiffReviewScope,
     unitFingerprint: string,
     reviewType: 'staged' | 'uncommitted' | 'lastCommit' | 'branch',
-    runContext: Awaited<ReturnType<typeof prepareDiffReviewContext>>,
+    reviewContextEnvelope: ContextEnvelope,
+    changeBrief: string | undefined,
     runId: number,
     sessionId: string,
     token?: vscode.CancellationToken
@@ -483,11 +585,8 @@ export class ReviewOrchestrator implements vscode.Disposable {
       reviewType,
       diff: scope.diff,
     };
-    const contextEnvelope = await buildPreparedDiffContextEnvelope(runContext, {
-      primaryFiles: scope.filePaths,
-    });
-    request.crossFileContext = contextEnvelope.text;
-    request.reviewPackage = buildDiffReviewPackage(request, scope.diff, contextEnvelope);
+    request.crossFileContext = reviewContextEnvelope.text;
+    request.reviewPackage = buildDiffReviewPackage(request, scope.diff, reviewContextEnvelope, changeBrief);
     logDebug('Invoking per-file diff review scope', {
       sessionId,
       runId,
@@ -498,6 +597,8 @@ export class ReviewOrchestrator implements vscode.Disposable {
       diffChars: scope.diff.length,
       estimatedPromptChars: scope.estimatedPromptChars,
       crossFileContextChars: request.crossFileContext?.length ?? 0,
+      sharedContextFileCount: reviewContextEnvelope.files.length,
+      changeBriefChars: changeBrief?.length ?? 0,
     });
 
     const cachedComments = await this.loadExactUnitComments(this.getWorkspaceRoot(), unitFingerprint);
@@ -940,6 +1041,71 @@ export class ReviewOrchestrator implements vscode.Disposable {
     }
   }
 
+  private async generateChangeBriefWithProvider(prompt: string, token?: vscode.CancellationToken): Promise<{ text: string; provider: string }> {
+    const provider = this.getProvider();
+    this.activeProviders.add(provider);
+
+    try {
+      const text = await provider.generateChangeBrief(prompt, token);
+      return {
+        text,
+        provider: provider.name,
+      };
+    } finally {
+      this.activeProviders.delete(provider);
+    }
+  }
+
+  private async buildReviewChangeBrief(
+    formattedDiff: string,
+    reviewContextEnvelope: ContextEnvelope,
+    reviewType: 'staged' | 'uncommitted' | 'lastCommit' | 'branch',
+    runId: number,
+    sessionId: string,
+    token?: vscode.CancellationToken
+  ): Promise<string | undefined> {
+    if (token?.isCancellationRequested) {
+      return undefined;
+    }
+
+    const prompt = buildChangeBriefPrompt(formattedDiff, reviewContextEnvelope);
+    logDebug('Generating review-level change brief', {
+      sessionId,
+      runId,
+      reviewType,
+      diffChars: formattedDiff.length,
+      contextFileCount: reviewContextEnvelope.files.length,
+      contextChars: reviewContextEnvelope.totalChars,
+      promptChars: prompt.length,
+    });
+
+    try {
+      const result = await this.generateChangeBriefWithProvider(prompt, token);
+      const brief = normalizeChangeBrief(result.text);
+      logDebug('Generated review-level change brief', {
+        sessionId,
+        runId,
+        reviewType,
+        provider: result.provider,
+        rawBriefChars: result.text.length,
+        briefChars: brief.length,
+      });
+      return brief;
+    } catch (error) {
+      if (error instanceof Error && this.isCancellationError(error)) {
+        throw error;
+      }
+
+      logDebug('Review-level change brief generation failed; continuing without brief', {
+        sessionId,
+        runId,
+        reviewType,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
+  }
+
   private buildPerFileDiffPlan(formattedDiff: string): PerFileDiffReviewPlan {
     const parsedFileDiffs = parseDiffIntoFiles(formattedDiff);
     const fileDiffs = parsedFileDiffs.filter(isReviewableDiffFile);
@@ -1008,4 +1174,18 @@ function safeParseJsonArray(value: string): string[] {
   } catch {
     return [];
   }
+}
+
+function normalizeChangeBrief(value: string): string {
+  return value
+    .replace(/```(?:\w+)?/g, '')
+    .trim()
+    .slice(0, 4_000);
+}
+
+function summarizeContextReasons(envelope: ContextEnvelope): Record<string, number> {
+  return envelope.files.reduce<Record<string, number>>((summary, file) => {
+    summary[file.reason] = (summary[file.reason] ?? 0) + 1;
+    return summary;
+  }, {});
 }

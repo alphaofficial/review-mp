@@ -320,4 +320,27 @@ export class DiffContextCollector {
 
     return { diff: diffOutput, formattedDiff };
   }
+
+  async getChangedFiles(
+    type: 'staged' | 'uncommitted' | 'lastCommit' | 'branch',
+    token?: vscode.CancellationToken
+  ): Promise<string[]> {
+    let output: string;
+    if (type === 'branch') {
+      const resolvedBase = await this.resolveBranchBase(token);
+      output = await this.executeGit(['diff', '--name-only', resolvedBase.baseSha, resolvedBase.headSha], token);
+    } else {
+      const commands: Record<'staged' | 'uncommitted' | 'lastCommit', string[]> = {
+        staged: ['diff', '--cached', '--name-only'],
+        uncommitted: ['diff', '--name-only'],
+        lastCommit: ['diff', '--name-only', 'HEAD~1', 'HEAD'],
+      };
+      output = await this.executeGit(commands[type], token);
+    }
+
+    return output
+      .split('\n')
+      .map((filePath) => filePath.trim())
+      .filter((filePath) => filePath.length > 0);
+  }
 }
