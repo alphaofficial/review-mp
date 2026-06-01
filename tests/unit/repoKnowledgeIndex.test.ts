@@ -1,6 +1,6 @@
 /// <reference types="node" />
 
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import * as lancedb from '@lancedb/lancedb';
@@ -104,6 +104,27 @@ describe('RepoKnowledgeIndex', () => {
     });
 
     expect(results.some((row) => row.filePath.includes('outside'))).toBe(false);
+  });
+
+  it('ignores incremental candidates inside ignored directories', async () => {
+    const workspaceRoot = mkdtempSync(path.join(os.tmpdir(), 'reviewmp-index-'));
+    tempRoots.push(workspaceRoot);
+    mkdirSync(path.join(workspaceRoot, 'node_modules', 'pkg'), { recursive: true });
+    writeFileSync(
+      path.join(workspaceRoot, 'node_modules', 'pkg', 'index.ts'),
+      'export const vendoredOnlySymbol = "vendored-only-symbol";\n',
+      'utf8'
+    );
+    const index = await RepoKnowledgeIndex.forWorkspace(workspaceRoot);
+
+    await index.indexFiles(['node_modules/pkg/index.ts']);
+
+    const results = await index.searchCode({
+      queryText: 'vendored-only-symbol',
+      limit: 10,
+    });
+
+    expect(results.some((row) => row.filePath === 'node_modules/pkg/index.ts')).toBe(false);
   });
 
   it('creates file and repo summaries during indexing', async () => {

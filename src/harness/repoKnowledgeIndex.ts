@@ -870,7 +870,10 @@ export class RepoKnowledgeIndex {
 
     return [...new Set(candidateFilePaths.map((candidate) => (
       path.isAbsolute(candidate) ? candidate : path.join(this.workspaceRoot, candidate)
-    )))].filter((absolutePath) => toRelativeFilePath(this.workspaceRoot, absolutePath) !== undefined && isIndexableFile(absolutePath));
+    )))].filter((absolutePath) => {
+      const relativePath = toRelativeFilePath(this.workspaceRoot, absolutePath);
+      return relativePath !== undefined && isIndexableFile(absolutePath) && !isIgnoredRelativePath(relativePath);
+    });
   }
 
   private resolveRelativeTargets(candidateFilePaths?: string[]): string[] {
@@ -883,7 +886,11 @@ export class RepoKnowledgeIndex {
         ? candidate
         : path.join(this.workspaceRoot, candidate);
       return toRelativeFilePath(this.workspaceRoot, absolutePath);
-    }))].filter((relativePath): relativePath is string => relativePath !== undefined && SUPPORTED_EXTENSIONS.has(path.extname(relativePath)));
+    }))].filter((relativePath): relativePath is string => (
+      relativePath !== undefined
+      && SUPPORTED_EXTENSIONS.has(path.extname(relativePath))
+      && !isIgnoredRelativePath(relativePath)
+    ));
   }
 
   private async scanWorkspaceFiles(control?: IndexingControl): Promise<string[]> {
@@ -1441,6 +1448,10 @@ function yieldToEventLoop(): Promise<void> {
 
 function isIndexableFile(filePath: string): boolean {
   return SUPPORTED_EXTENSIONS.has(path.extname(filePath));
+}
+
+function isIgnoredRelativePath(relativePath: string): boolean {
+  return relativePath.split(/[\\/]+/).some((segment) => IGNORED_DIRECTORIES.has(segment));
 }
 
 function toRelativeFilePath(workspaceRoot: string, absolutePath: string): string | undefined {
