@@ -66,7 +66,6 @@ let codeIndexTreeProvider: CodeIndexTreeProvider | undefined;
 const store = getReviewSessionStore();
 
 export function activate(context: vscode.ExtensionContext) {
-  console.log('ReviewMP is now active');
   logDebug('ReviewMP extension activated', {
     extensionPath: context.extensionPath,
     subscriptionCount: context.subscriptions.length,
@@ -171,6 +170,7 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   registerSettingsCommands(context);
+  logDebug('ReviewMP debug logs initialized');
   showDebugLogs(true);
 
   const reviewFileCommand = vscode.commands.registerCommand(

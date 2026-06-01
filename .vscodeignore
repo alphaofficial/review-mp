@@ -25,6 +25,8 @@ node_modules/**
 !node_modules/@lancedb/
 !node_modules/@lancedb/lancedb/**
 !node_modules/@lancedb/lancedb-*/**
+!node_modules/apache-arrow/**
+!node_modules/reflect-metadata/**
 !node_modules/tree-sitter/**
 !node_modules/tree-sitter-c/**
 !node_modules/tree-sitter-c-sharp/**
