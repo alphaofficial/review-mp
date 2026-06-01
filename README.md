@@ -1,4 +1,13 @@
+<p align="center">
+  <img src="https://images.pexels.com/photos/7988747/pexels-photo-7988747.jpeg?auto=compress&cs=tinysrgb&w=1600" alt="Developers reviewing code on a large screen" width="100%">
+</p>
+
 # ReviewMP
+
+<p align="center">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.0.1-2f6fed">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
+</p>
 
 A runtime-agnostic AI code review harness for VS Code with inline comments.
 
