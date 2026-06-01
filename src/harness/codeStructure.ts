@@ -39,7 +39,7 @@ export interface CodeStructure {
   parser: 'ts-morph' | 'tree-sitter' | 'none';
 }
 
-type TreeSitterLanguage = Parser.Language | TreeSitterModule;
+type TreeSitterLanguage = Parameters<Parser['setLanguage']>[0] | TreeSitterModule;
 
 interface TreeSitterModule {
   language?: TreeSitterLanguage;
@@ -111,7 +111,6 @@ export function getSupportedCodeExtensions(): Set<string> {
     '.py',
     '.rb',
     '.rs',
-    '.swift',
     '.ts',
     '.tsx',
   ]);
@@ -148,8 +147,6 @@ export function getLanguageIdFromFilePath(filePath: string): string {
       return 'ruby';
     case '.rs':
       return 'rust';
-    case '.swift':
-      return 'swift';
     case '.ts':
       return 'typescript';
     case '.tsx':
@@ -290,7 +287,7 @@ function extractTreeSitterStructure(languageId: string, code: string, filePath?:
 
   const ParserConstructor = getTreeSitterParserConstructor();
   const parser = new ParserConstructor();
-  parser.setLanguage(config.language as Parser.Language);
+  parser.setLanguage(config.language as Parameters<Parser['setLanguage']>[0]);
   const tree = parser.parse(code);
   const blocks: CodeBlock[] = [];
   const imports: ImportInfo[] = [];
@@ -405,8 +402,6 @@ function loadTreeSitterLanguage(languageId: string): ParserConfig | undefined {
       case 'cc':
       case 'cxx':
         return { language: requireTreeSitterModule('tree-sitter-cpp'), parserName: 'tree-sitter' };
-      case 'swift':
-        return { language: requireTreeSitterModule('tree-sitter-swift'), parserName: 'tree-sitter' };
       case 'kotlin':
       case 'kt':
       case 'kts':
