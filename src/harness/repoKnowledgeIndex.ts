@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Connection, Table } from '@lancedb/lancedb';
+import { isDebugLoggingEnabled } from '../buildFlags';
 import { CodeRelationship, extractCodeStructure, getLanguageIdFromFilePath, getSupportedCodeExtensions } from './codeStructure';
 import { EMBEDDING_ALGORITHM_VERSION, embedText } from './textEmbedding';
 
@@ -11,6 +12,10 @@ const requireFromHere = createRequire(__filename);
 let lancedbModule: typeof import('@lancedb/lancedb') | undefined;
 
 function logDebug(message: string, data?: unknown): void {
+  if (!isDebugLoggingEnabled()) {
+    return;
+  }
+
   try {
     const timestamp = new Date().toISOString();
     if (data === undefined) {

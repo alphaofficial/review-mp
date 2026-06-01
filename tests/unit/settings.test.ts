@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { isDebugLoggingEnabled } from '../../src/buildFlags';
 import { getSettings, setRuntime, logDebug, showDebugLogs, Settings } from '../../src/settings';
 import { DEFAULT_RUNTIME_ID } from '../../src/providers/runtimeRegistry';
 
@@ -165,5 +166,11 @@ describe('logDebug', () => {
 describe('showDebugLogs', () => {
   it('does not throw when called', () => {
     expect(() => showDebugLogs()).not.toThrow();
+  });
+});
+
+describe('build flags', () => {
+  it('keeps debug logging enabled outside production bundles', () => {
+    expect(isDebugLoggingEnabled()).toBe(true);
   });
 });

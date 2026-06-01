@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { isDebugLoggingEnabled } from './buildFlags';
 import { RuntimeId, DEFAULT_RUNTIME_ID } from './providers/runtimeRegistry';
 
 export interface Settings {
@@ -56,10 +57,18 @@ function getOutputChannel(): vscode.OutputChannel {
 }
 
 export function showDebugLogs(preserveFocus = false): void {
+  if (!isDebugLoggingEnabled()) {
+    return;
+  }
+
   getOutputChannel().show(preserveFocus);
 }
 
 export function logDebug(message: string, ...data: unknown[]): void {
+  if (!isDebugLoggingEnabled()) {
+    return;
+  }
+
   try {
     const timestamp = new Date().toISOString();
     const line = [`[ReviewMP DEBUG ${timestamp}]`, message, ...data.map((value) => formatLogValue(value))].join(' ');
@@ -83,7 +92,9 @@ function formatLogValue(value: unknown): string {
 }
 
 export async function registerSettingsCommands(context: vscode.ExtensionContext): Promise<void> {
-  context.subscriptions.push(getOutputChannel());
+  if (isDebugLoggingEnabled()) {
+    context.subscriptions.push(getOutputChannel());
+  }
 
   context.subscriptions.push(
     vscode.commands.registerCommand('reviewmp.selectRuntime', async () => {
