@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import type Parser from 'tree-sitter';
+import * as tsMorph from 'ts-morph';
 import type { Node as TsMorphNode, SourceFile as TsMorphSourceFile } from 'ts-morph';
 
 const requireFromHere = createRequire(__filename);
@@ -424,7 +425,7 @@ function getTreeSitterParserConstructor(): typeof Parser {
 }
 
 function getTsMorphApi(): typeof import('ts-morph') {
-  tsMorphApi ??= requireFromHere('ts-morph') as typeof import('ts-morph');
+  tsMorphApi ??= tsMorph;
   return tsMorphApi;
 }
 
