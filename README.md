@@ -1,4 +1,13 @@
+<p align="center">
+  <img src="https://images.pexels.com/photos/7988747/pexels-photo-7988747.jpeg?auto=compress&cs=tinysrgb&w=1600" alt="Developers reviewing code on a large screen" width="100%">
+</p>
+
 # ReviewMP
+
+<p align="center">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.0.1-2f6fed">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
+</p>
 
 A runtime-agnostic AI code review harness for VS Code with inline comments.
 
@@ -151,7 +160,8 @@ Example `settings.json`:
   "reviewmp.runtime": "claude",
   "reviewmp.model": "claude-sonnet-4-20250514",
   "reviewmp.autoReviewOnStage": true,
-  "reviewmp.autoReviewOnCommit": false
+  "reviewmp.autoReviewOnCommit": false,
+  "reviewmp.reviewConcurrency": 5
 }
 ```
 
@@ -163,6 +173,10 @@ Example `settings.json`:
 | `reviewmp.model` | (empty) | Model override. Leave empty for runtime default. |
 | `reviewmp.autoReviewOnStage` | `false` | Automatically review when files are staged |
 | `reviewmp.autoReviewOnCommit` | `false` | Prompt to review before commit |
+| `reviewmp.codeIndexEnabled` | `true` | Enable repository indexing for related-code retrieval and review memory |
+| `reviewmp.reviewConcurrency` | `5` | Maximum number of diff file review scopes to run in parallel |
+| `reviewmp.executableOverride` | (empty) | Override the selected runtime executable path |
+| `reviewmp.extraArgs` | (empty) | Additional arguments passed to the selected runtime |
 
 ### Runtime-Specific Settings
 
@@ -237,6 +251,36 @@ ReviewMP Command → ReviewOrchestrator → ReviewHarness → RuntimeAdapter →
 - **ContextCollector**: Git diff, branch detection, file reading
 
 ReviewMP is provider-agnostic - the same review workflow runs identically regardless of which runtime is selected. Authentication and runtime management are handled by the external runtime itself.
+
+## Execution Trace
+
+For `Review Current File`, the exact path is:
+
+1. You trigger `reviewmp.reviewFile` from the command palette, context menu, or tree view. That command is registered in [src/extension.ts](src/extension.ts) and forwards the active document to `orchestrator.reviewFile(...)`.
+2. `ReviewOrchestrator.reviewFile()` turns the document into a `ReviewRequest` with `code`, `languageId`, `filePath`, and `reviewType: 'file'` in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
+3. `reviewCode()` starts a new run, creates a session in the store, records the file as pending, and moves the session through `settingUp -> analyzing` in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts) and [src/store/reviewSessionStore.ts](src/store/reviewSessionStore.ts).
+4. Because this is a file review, it calls `reviewPreparedFile()` in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
+5. `reviewPreparedFile()` computes a deterministic fingerprint for this exact target and checks the local knowledge index for an exact cached hit before calling any model in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts) and [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
+6. If there is no exact hit, it builds a context envelope around the file via `buildFileContextEnvelope(...)`, then packages the target plus supporting context into `reviewPackage` in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts). That context system is the thing that pulls related files, code graph context, history, and indexed memory when available; the diff version of that logic starts in [src/harness/contextRetriever.ts](src/harness/contextRetriever.ts).
+7. `invokeProvider()` creates the runtime provider for the currently selected CLI, invokes it, and then filters unsupported findings in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
+8. The provider is a `CliRuntimeAdapter`, which builds the prompt, chooses stdin vs argv transport based on the runtime manifest, and spawns the CLI process in [src/providers/runtimeAdapter.ts](src/providers/runtimeAdapter.ts) and [src/providers/runtimeAdapter.ts](src/providers/runtimeAdapter.ts). For Codex specifically, it prepends a strict “review-only mode” block in [src/providers/runtimeAdapter.ts](src/providers/runtimeAdapter.ts).
+9. When comments come back, `reviewCode()` adjusts line numbers for selections if needed, converts comments into findings in the session store, and hands them to the comment controller in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
+10. `ReviewCommentController.addComments()` creates VS Code comment threads anchored to the target lines and renders the markdown/fix UI inline in [src/comments.ts](src/comments.ts).
+11. When the session completes, `ReviewKnowledgeRecorder` writes the exact review run and findings back into the local index, and if indexing is enabled it also writes semantic review memory for reuse later in [src/harness/reviewKnowledgeRecorder.ts](src/harness/reviewKnowledgeRecorder.ts).
+
+For `Review Staged Changes` / `Review Branch Changes`, the flow is the same until setup, then it diverges:
+
+1. `reviewStaged()` / `reviewBranch()` call `reviewGitChanges(...)` in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts) and [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
+2. During setup, the orchestrator asks `DiffContextCollector` for changed file names and records them in the session so the `FILES` view can populate before deeper analysis starts.
+3. During analysis, the orchestrator asks `DiffContextCollector` for the full diff, then calls `reviewPlannedDiff(...)` in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts) and [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
+4. `reviewPlannedDiff()` parses the diff into final reviewable files, creates one scope per file, fingerprints the whole diff and each unit, and can reuse exact cached results at both the whole-review and per-file-scope level in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts) and [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
+5. It builds one shared diff context envelope with the diff manifest, change map, related retrieval context, review memory, and repo summary in [src/harness/contextRetriever.ts](src/harness/contextRetriever.ts). It then generates one review-level change brief from that shared context.
+6. File scopes are reviewed in parallel up to `reviewmp.reviewConcurrency`, each receiving its own target diff plus the shared context and change brief. Findings are deduped and severity-sorted by `synthesizeReviewComments(...)` in [src/harness/reviewSynthesizer.ts](src/harness/reviewSynthesizer.ts).
+7. `addDiffComments()` groups findings by file and renders inline comment threads into the real workspace files in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
+
+The UI state you see in the side panel is all store-driven. The `NEW REVIEW`, `FILES`, `REVIEWS`, and `PREVIOUS REVIEWS` trees read directly from `ReviewSessionStore` in [src/reviewTreeProvider.ts](src/reviewTreeProvider.ts). So the extension is effectively:
+
+`command -> orchestrator -> cache/context packaging -> runtime CLI -> findings -> store -> inline comments/tree UI -> knowledge writeback`
 
 ## Security
 

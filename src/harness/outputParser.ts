@@ -528,6 +528,7 @@ export class OutputParser {
         message: item.message as string,
         fix: typeof item.fix === 'string' ? item.fix : undefined,
         severity: this.validateSeverity(item.severity),
+        evidence: parseEvidence(item.evidence, defaultFilePath),
       }));
   }
 
@@ -552,6 +553,7 @@ export class OutputParser {
         message: item.message as string,
         fix: typeof item.fix === 'string' ? item.fix : undefined,
         severity: this.validateSeverity(item.severity),
+        evidence: parseEvidence(item.evidence, (item.file as string) || ''),
       }));
   }
 
@@ -645,5 +647,24 @@ export function validateComments(
         message: item.message as string,
         fix: typeof item.fix === 'string' ? item.fix : undefined,
         severity: validateSeverity(item.severity),
+        evidence: parseEvidence(item.evidence, (item.file as string) || filePath || ''),
       }));
+}
+
+function parseEvidence(value: unknown, defaultFilePath: string): ReviewComment['evidence'] {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const evidence = value
+    .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null && typeof item.quote === 'string')
+    .map((item) => ({
+      file: typeof item.file === 'string' ? item.file : defaultFilePath,
+      line: typeof item.line === 'number' ? item.line - 1 : undefined,
+      quote: item.quote as string,
+      reason: typeof item.reason === 'string' ? item.reason : undefined,
+    }))
+    .filter((item) => item.file && item.quote.trim().length > 0);
+
+  return evidence.length > 0 ? evidence : undefined;
 }

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { logDebug } from './settings';
 
 // VS Code Git Extension API types
 interface GitExtension {
@@ -37,6 +38,7 @@ export class GitWatcher implements vscode.Disposable {
     private onStageCallback: () => Promise<void>,
     private onCommitCallback: () => Promise<boolean>
   ) {
+    logDebug('Git watcher constructed');
     this.setupConfigListener();
     this.initGitWatcher();
   }
@@ -47,6 +49,7 @@ export class GitWatcher implements vscode.Disposable {
         e.affectsConfiguration('reviewmp.autoReviewOnStage') ||
         e.affectsConfiguration('reviewmp.autoReviewOnCommit')
       ) {
+        logDebug('Git watcher configuration changed; reinitializing');
         this.stopPolling();
         this.initGitWatcher();
       }
@@ -64,16 +67,17 @@ export class GitWatcher implements vscode.Disposable {
 
   private async initGitWatcher(): Promise<void> {
     const config = this.getConfig();
+    logDebug('Initializing git watcher', config);
     
     if (!config.autoReviewOnStage && !config.autoReviewOnCommit) {
-      console.log('[ReviewMP] Auto-review disabled, skipping git watcher');
+      logDebug('Auto-review disabled; skipping git watcher initialization', config);
       return;
     }
 
     // Get VS Code's built-in Git extension
     const gitExtension = vscode.extensions.getExtension<GitExtension>('vscode.git');
     if (!gitExtension) {
-      console.log('[ReviewMP] Git extension not found');
+      logDebug('Git watcher initialization skipped because VS Code Git extension was not found');
       return;
     }
 
@@ -92,9 +96,15 @@ export class GitWatcher implements vscode.Disposable {
       });
       this.disposables.push(repoDisposable);
 
-      console.log('[ReviewMP] Git watcher initialized');
+      logDebug('Git watcher initialized', {
+        repositoryCount: git.repositories.length,
+        autoReviewOnStage: config.autoReviewOnStage,
+        autoReviewOnCommit: config.autoReviewOnCommit,
+      });
     } catch (err) {
-      console.log('[ReviewMP] Failed to initialize git watcher:', err);
+      logDebug('Git watcher initialization failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -113,14 +123,21 @@ export class GitWatcher implements vscode.Disposable {
     if (config.autoReviewOnCommit) {
       const commitDisposable = repo.onDidCommit(async () => {
         if (this.isReviewing) {
+          logDebug('Git watcher ignored commit event because review is already running');
           return;
         }
 
-        console.log('[ReviewMP] Commit detected');
+        logDebug('Git watcher detected commit; triggering commit review');
 
         try {
           this.isReviewing = true;
           await this.onCommitCallback();
+          logDebug('Git watcher commit review completed');
+        } catch (error) {
+          logDebug('Git watcher commit review failed', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
         } finally {
           this.isReviewing = false;
         }
@@ -128,10 +145,17 @@ export class GitWatcher implements vscode.Disposable {
       this.disposables.push(commitDisposable);
     }
 
-    console.log('[ReviewMP] Watching repository, initial staged files:', this.lastIndexCount);
+    logDebug('Git watcher watching repository', {
+      initialStagedFileCount: this.lastIndexCount,
+      autoReviewOnStage: config.autoReviewOnStage,
+      autoReviewOnCommit: config.autoReviewOnCommit,
+    });
   }
 
   private startPolling(): void {
+    logDebug('Git watcher stage polling started', {
+      intervalMs: 2000,
+    });
     this.pollTimer = setInterval(() => {
       this.checkForStagedChanges();
     }, 2000); // Poll every 2 seconds
@@ -139,6 +163,7 @@ export class GitWatcher implements vscode.Disposable {
 
   private stopPolling(): void {
     if (this.pollTimer) {
+      logDebug('Git watcher stage polling stopped');
       clearInterval(this.pollTimer);
       this.pollTimer = undefined;
     }
@@ -146,6 +171,10 @@ export class GitWatcher implements vscode.Disposable {
 
   private checkForStagedChanges(): void {
     if (!this.repository || this.isReviewing) {
+      logDebug('Git watcher staged-change check skipped', {
+        hasRepository: Boolean(this.repository),
+        isReviewing: this.isReviewing,
+      });
       return;
     }
 
@@ -156,7 +185,11 @@ export class GitWatcher implements vscode.Disposable {
 
     // Detect if files were staged or the staged set changed in place.
     if (currentIndexCount > this.lastIndexCount || (currentIndexCount === this.lastIndexCount && stagedSetChanged)) {
-      console.log('[ReviewMP] Files staged:', this.lastIndexCount, '->', currentIndexCount);
+      logDebug('Git watcher detected staged changes', {
+        previousIndexCount: this.lastIndexCount,
+        currentIndexCount,
+        stagedSetChanged,
+      });
       this.triggerReview();
     }
 
@@ -186,17 +219,27 @@ export class GitWatcher implements vscode.Disposable {
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
     }
+    logDebug('Git watcher scheduled staged review', {
+      debounceMs: 500,
+    });
 
     this.debounceTimer = setTimeout(async () => {
       if (this.isReviewing) {
+        logDebug('Git watcher skipped staged review because review is already running');
         return;
       }
 
-      console.log('[ReviewMP] Triggering staged review');
+      logDebug('Git watcher triggering staged review');
 
       try {
         this.isReviewing = true;
         await this.onStageCallback();
+        logDebug('Git watcher staged review completed');
+      } catch (error) {
+        logDebug('Git watcher staged review failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
       } finally {
         this.isReviewing = false;
       }
@@ -204,6 +247,11 @@ export class GitWatcher implements vscode.Disposable {
   }
 
   dispose(): void {
+    logDebug('Disposing git watcher', {
+      disposableCount: this.disposables.length,
+      hasDebounceTimer: Boolean(this.debounceTimer),
+      hasPollTimer: Boolean(this.pollTimer),
+    });
     this.stopPolling();
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);

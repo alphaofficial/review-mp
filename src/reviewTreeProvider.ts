@@ -275,7 +275,7 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
   }
 
   private getReviewFilesSection(session: ReviewSession): TreeElement[] {
-    const files = Array.from(session.files.values());
+    const files = this.getFilesWithFindings(session);
 
     if (files.length === 0) {
       return [];
@@ -288,6 +288,10 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
       collapsibleState: vscode.TreeItemCollapsibleState.Expanded,
       children: files.map(file => this.fileToTreeElement(file)),
     }];
+  }
+
+  private getFilesWithFindings(session: ReviewSession): ReviewFile[] {
+    return Array.from(session.files.values()).filter((file) => file.findings.length > 0);
   }
 
   private findingToTreeElement(finding: ReviewFinding): TreeElement {
@@ -384,7 +388,6 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
       case 'lastCommit':
         return 'Review committed changes';
       case 'branch':
-      case 'pullRequest':
         return 'Review all changes';
       case 'file':
         return 'Review current file';
@@ -445,7 +448,6 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
       uncommitted: '$(diff-modified)',
       lastCommit: '$(git-commit)',
       branch: '$(git-branch)',
-      pullRequest: '$(git-pull-request)',
     };
     return this.toThemeIconId(icons[reviewType] || '$(file)');
   }

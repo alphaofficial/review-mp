@@ -7,6 +7,33 @@ vi.mock('../../src/settings', () => ({
 import { ReviewSessionStore, createReviewSessionStore, resetReviewSessionStore } from '../../src/store/reviewSessionStore';
 import { ReviewFinding, ReviewFile, ReviewHistoryEntry, ReviewSession, ReviewStatus, ReviewType } from '../../src/types/review';
 
+function transitionSessionTo(store: ReviewSessionStore, status: ReviewStatus): void {
+  switch (status) {
+    case 'idle':
+      return;
+    case 'settingUp':
+      store.transitionSession('startSetup');
+      return;
+    case 'analyzing':
+      store.transitionSession('startSetup');
+      store.transitionSession('beginAnalysis');
+      return;
+    case 'reviewing':
+      store.transitionSession('startSetup');
+      store.transitionSession('beginAnalysis');
+      store.transitionSession('beginReview');
+      return;
+    case 'completed':
+      store.transitionSession('startSetup');
+      store.transitionSession('beginAnalysis');
+      store.transitionSession('complete');
+      return;
+    case 'failed':
+      store.setSessionError('Test failure');
+      return;
+  }
+}
+
 describe('ReviewSessionStore', () => {
   let store: ReviewSessionStore;
 
@@ -109,10 +136,10 @@ describe('ReviewSessionStore', () => {
     });
   });
 
-  describe('updateSessionStatus', () => {
-    it('should update session status', () => {
+  describe('transitionSession', () => {
+    it('should update session status through valid transitions', () => {
       store.createSession('file');
-      store.updateSessionStatus('settingUp');
+      store.transitionSession('startSetup');
 
       expect(store.getActiveSession()?.status).toBe('settingUp');
     });
@@ -122,14 +149,15 @@ describe('ReviewSessionStore', () => {
       const listener = vi.fn();
       store.on('status-changed', listener);
 
-      store.updateSessionStatus('analyzing');
+      store.transitionSession('startSetup');
+      store.transitionSession('beginAnalysis');
 
       expect(listener).toHaveBeenCalledWith({ sessionId: expect.any(String), status: 'analyzing' });
     });
 
     it('should finalize session when status is completed', () => {
       store.createSession('file');
-      store.updateSessionStatus('completed');
+      transitionSessionTo(store, 'completed');
 
       expect(store.getActiveSession()?.completedAt).toBeGreaterThan(0);
       expect(store.getSessionHistory()).toHaveLength(1);
@@ -137,15 +165,54 @@ describe('ReviewSessionStore', () => {
 
     it('should finalize session when status is failed', () => {
       store.createSession('file');
-      store.updateSessionStatus('failed');
+      store.setSessionError('Provider timeout');
 
       expect(store.getActiveSession()?.completedAt).toBeGreaterThan(0);
       expect(store.getSessionHistory()).toHaveLength(1);
     });
 
     it('should do nothing if no active session', () => {
-      store.updateSessionStatus('analyzing');
+      expect(store.transitionSession('beginAnalysis')).toBe(false);
       expect(store.getActiveSession()).toBeNull();
+    });
+
+    it('should reject invalid transitions', () => {
+      store.createSession('file');
+
+      expect(store.transitionSession('beginReview')).toBe(false);
+      expect(store.getActiveSession()?.status).toBe('idle');
+    });
+  });
+
+  describe('file state machine', () => {
+    it('should mark seeded files as reviewing when review begins', () => {
+      store.createSession('staged');
+      store.setFilesToReview(['/test/a.ts']);
+
+      store.markFilesReviewing(['/test/a.ts']);
+
+      expect(store.getFilesForSession()[0]?.status).toBe('reviewing');
+    });
+
+    it('should mark files without pending findings as reviewed when review completes', () => {
+      store.createSession('staged');
+      store.setFilesToReview(['/test/a.ts']);
+      store.markFilesReviewing(['/test/a.ts']);
+
+      store.completeFilesReview(['/test/a.ts']);
+
+      expect(store.getFilesForSession()[0]?.status).toBe('reviewed');
+    });
+
+    it('should keep files with pending findings in reviewing when completion is attempted', () => {
+      store.createSession('staged');
+      store.setFilesToReview(['/test/a.ts']);
+      store.markFilesReviewing(['/test/a.ts']);
+      store.addFinding('/test/a.ts', 1, 'Error', 'error');
+
+      store.completeFilesReview(['/test/a.ts']);
+
+      expect(store.getFilesForSession()[0]?.status).toBe('reviewing');
     });
   });
 
@@ -446,7 +513,7 @@ describe('ReviewSessionStore', () => {
     it('should not affect session history when clearing active session', () => {
       store.createSession('staged', 'Historical Review');
       store.addFinding('/test/file.ts', 1, 'Error', 'error');
-      store.updateSessionStatus('completed');
+      transitionSessionTo(store, 'completed');
 
       expect(store.getSessionHistory()).toHaveLength(1);
       expect(store.getSessionHistory()[0].title).toBe('Historical Review');
@@ -467,17 +534,13 @@ describe('ReviewSessionStore', () => {
 
     it('should return completed sessions', () => {
       store.createSession('staged', 'Review 1');
-      store.updateSessionStatus('settingUp');
-      store.updateSessionStatus('analyzing');
-      store.updateSessionStatus('reviewing');
+      transitionSessionTo(store, 'reviewing');
       store.addFinding('/test/file.ts', 1, 'Error', 'error');
-      store.updateSessionStatus('completed');
+      store.transitionSession('complete');
 
       store.createSession('branch', 'Review 2');
-      store.updateSessionStatus('settingUp');
-      store.updateSessionStatus('analyzing');
-      store.updateSessionStatus('reviewing');
-      store.updateSessionStatus('completed');
+      transitionSessionTo(store, 'reviewing');
+      store.transitionSession('complete');
 
       const history = store.getSessionHistory();
       expect(history).toHaveLength(2);
@@ -489,7 +552,7 @@ describe('ReviewSessionStore', () => {
       for (let i = 0; i < 15; i++) {
         store.createSession('file', `Review ${i}`);
         store.addFinding('/test/file.ts', i, 'Error', 'error');
-        store.updateSessionStatus('completed');
+        transitionSessionTo(store, 'completed');
       }
 
       const history = store.getSessionHistory();
@@ -499,9 +562,10 @@ describe('ReviewSessionStore', () => {
 
     it('should record duration and findings count', () => {
       store.createSession('staged', 'Test Review');
-      store.updateSessionStatus('settingUp');
+      store.transitionSession('startSetup');
       store.addFinding('/test/file.ts', 1, 'Error', 'error');
-      store.updateSessionStatus('completed');
+      store.transitionSession('beginAnalysis');
+      store.transitionSession('complete');
 
       const history = store.getSessionHistory();
       expect(history[0].findingsCount).toBe(1);
@@ -512,7 +576,7 @@ describe('ReviewSessionStore', () => {
       store.createSession('lastCommit', 'Restorable Review');
       store.setFilesToReview(['/test/file.ts']);
       store.addFinding('/test/file.ts', 3, 'Error', 'error');
-      store.updateSessionStatus('completed');
+      transitionSessionTo(store, 'completed');
 
       const history = store.getSessionHistory();
       expect(history[0].files).toHaveLength(1);
@@ -525,7 +589,7 @@ describe('ReviewSessionStore', () => {
       store.createSession('lastCommit', 'Previous Review');
       store.setFilesToReview(['/test/file.ts']);
       store.addFinding('/test/file.ts', 3, 'Error', 'error');
-      store.updateSessionStatus('completed');
+      transitionSessionTo(store, 'completed');
 
       const sessionId = store.getSessionHistory()[0].sessionId;
       store.createSession('file', 'Current Review');
@@ -546,7 +610,7 @@ describe('ReviewSessionStore', () => {
   describe('clearHistory', () => {
     it('should clear session history', () => {
       store.createSession('file', 'Review 1');
-      store.updateSessionStatus('completed');
+      transitionSessionTo(store, 'completed');
 
       store.clearHistory();
 

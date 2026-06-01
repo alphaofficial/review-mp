@@ -2,11 +2,6 @@ import * as vscode from 'vscode';
 import { ReviewSessionStore } from './store/reviewSessionStore';
 import { ReviewFinding, Severity } from './types/review';
 
-interface DecorationState {
-  selectedFindingId: string | null;
-  gutterDecorations: Map<string, vscode.TextEditorDecorationType[]>;
-}
-
 export class ReviewDecorationController implements vscode.Disposable {
   private store: ReviewSessionStore;
   private context: vscode.ExtensionContext;
@@ -107,7 +102,7 @@ export class ReviewDecorationController implements vscode.Disposable {
     }, 50);
   }
 
-  private onVisibleEditorsChanged(editors: readonly vscode.TextEditor[]): void {
+  private onVisibleEditorsChanged(): void {
     this.applyAllDecorations();
   }
 

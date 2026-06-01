@@ -35,3 +35,6 @@ coverage/
 *.tmp
 *.temp
 .cache/
+
+# Legacy repo-local ReviewMP index storage
+.reviewmp/

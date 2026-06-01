@@ -12,12 +12,41 @@ function formatNumberedCode(code: string): string {
     .join('\n');
 }
 
+function renderSupportingContext(request: ReviewRequest): string {
+  if (request.reviewPackage && request.reviewPackage.supportingContext.length > 0) {
+    return request.reviewPackage.supportingContext
+      .map((item) => `Related file: ${item.filePath}\nReason: ${item.reason}\n${item.content}`)
+      .join('\n\n');
+  }
+
+  return request.crossFileContext ?? '';
+}
+
+function renderReviewOnlyRules(request: ReviewRequest): string {
+  if (!request.reviewPackage?.strictReviewOnly) {
+    return '';
+  }
+
+  return `Review-only boundary:
+- Review only the supplied target and supporting context.
+- Do NOT inspect other files.
+- Do NOT search the repository.
+- Do NOT run commands or gather additional context.
+- If the supplied material is insufficient to support a confident finding, do not report that finding.\n\n`;
+}
+
 export function buildFileReviewPrompt(request: ReviewRequest): FilePromptResult {
-  const numberedCode = formatNumberedCode(request.code);
+  const targetCode = request.reviewPackage?.target.content ?? request.code;
+  const numberedCode = formatNumberedCode(targetCode);
+  const supportingContext = renderSupportingContext(request);
+  const contextSection = supportingContext
+    ? `Relevant context for this review:\n${supportingContext}\n\n`
+    : '';
+  const reviewOnlySection = renderReviewOnlyRules(request);
 
   const basePrompt = `Review the following ${request.languageId} code from file "${request.filePath}".
 
-<code>
+${reviewOnlySection}${contextSection}<code>
 ${numberedCode}
 </code>
 
@@ -50,6 +79,7 @@ Do NOT:
 - Make suggestions without checking if the pattern exists elsewhere
 - Report issues that are handled by the callers
 - Make any code change or edit file
+- Inspect other files, search the repository, or gather additional context beyond what was supplied
 - Include markdown code fences around the final JSON output
 - Flag something as a bug if you're unsure - always investigate first
 - Invent hypothetical problems. If an edge case matters, explain the realistic scenario
@@ -67,8 +97,10 @@ Each comment in the array must have:
 - \`message\`: A clear explanation of WHY it's a problem. Do not repeat the title.
 - \`fix\`: (optional) The exact replacement/additional code only. Do not put prose, markdown, or explanation in \`fix\`.
 - \`severity\`: One of "error", "warning", "info", or "suggestion"
+- \`evidence\`: Non-empty array of exact quoted code/context snippets that support the finding. Each item must include \`file\`, optional \`line\`, \`quote\`, and optional \`reason\`.
 
-IMPORTANT: When code is provided with labels like "L0007 | const x = 5;", use only the numeric portion in your JSON output, e.g. \`"line": 7\`. Do NOT recalculate or adjust line numbers.`;
+IMPORTANT: When code is provided with labels like "L0007 | const x = 5;", use only the numeric portion in your JSON output, e.g. \`"line": 7\`. Do NOT recalculate or adjust line numbers.
+CRITICAL: Do not report a finding unless its \`evidence[].quote\` appears verbatim in the supplied code or context.`;
 
   return {
     prompt: `${basePrompt}
@@ -81,11 +113,17 @@ ${outputFormat}`,
 }
 
 export function buildSelectionReviewPrompt(request: ReviewRequest, startLine: number): FilePromptResult {
-  const numberedCode = formatNumberedCode(request.code);
+  const targetCode = request.reviewPackage?.target.content ?? request.code;
+  const numberedCode = formatNumberedCode(targetCode);
+  const supportingContext = renderSupportingContext(request);
+  const contextSection = supportingContext
+    ? `Relevant context for this review:\n${supportingContext}\n\n`
+    : '';
+  const reviewOnlySection = renderReviewOnlyRules(request);
 
   const basePrompt = `Review the following ${request.languageId} code selection from file "${request.filePath}" (selection starts at line ${startLine + 1}).
 
-<code>
+${reviewOnlySection}${contextSection}<code>
 ${numberedCode}
 </code>
 
@@ -118,6 +156,7 @@ Do NOT:
 - Make suggestions without checking if the pattern exists elsewhere
 - Report issues that are handled by the callers
 - Make any code change or edit file
+- Inspect other files, search the repository, or gather additional context beyond what was supplied
 - Include markdown code fences around the final JSON output
 - Flag something as a bug if you're unsure - always investigate first
 - Invent hypothetical problems. If an edge case matters, explain the realistic scenario
@@ -135,8 +174,10 @@ Each comment in the array must have:
 - \`message\`: A clear explanation of WHY it's a problem. Do not repeat the title.
 - \`fix\`: (optional) The exact replacement/additional code only. Do not put prose, markdown, or explanation in \`fix\`.
 - \`severity\`: One of "error", "warning", "info", or "suggestion"
+- \`evidence\`: Non-empty array of exact quoted code/context snippets that support the finding. Each item must include \`file\`, optional \`line\`, \`quote\`, and optional \`reason\`.
 
-IMPORTANT: When code is provided with labels like "L0007 | const x = 5;", use only the numeric portion in your JSON output, e.g. \`"line": 7\`.`;
+IMPORTANT: When code is provided with labels like "L0007 | const x = 5;", use only the numeric portion in your JSON output, e.g. \`"line": 7\`.
+CRITICAL: Do not report a finding unless its \`evidence[].quote\` appears verbatim in the supplied code or context.`;
 
   return {
     prompt: `${basePrompt}

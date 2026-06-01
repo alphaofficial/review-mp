@@ -1,4 +1,4 @@
-import { RuntimeId, RuntimeManifest, RuntimeRegistry } from './runtimeRegistry';
+import { RuntimeManifest, RuntimeRegistry } from './runtimeRegistry';
 
 export const builtInRuntimes: RuntimeManifest[] = [
   {

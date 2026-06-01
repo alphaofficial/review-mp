@@ -3,6 +3,7 @@ import { ModelProvider } from './providers/modelProvider';
 import { FixApplicator, createFixApplicator } from './harness/fixApplicator';
 import { ReviewFinding } from './types/review';
 import { ReviewSessionStore } from './store/reviewSessionStore';
+import { logDebug } from './settings';
 
 export interface ReviewComment {
   file: string;
@@ -39,6 +40,9 @@ export class ReviewCommentController implements vscode.Disposable {
     );
 
     this.controller.commentingRangeProvider = undefined;
+    logDebug('Review comment controller initialized', {
+      hasStore: Boolean(this.store),
+    });
 
     context.subscriptions.push(
       vscode.commands.registerCommand('reviewmp.acceptFix', (comment: vscode.Comment) =>
@@ -62,8 +66,10 @@ export class ReviewCommentController implements vscode.Disposable {
   }
 
   private onFindingUpdated(data: { sessionId: string; findingId: string; action: 'apply' | 'dismiss' }): void {
+    logDebug('Review comment controller observed finding update', data);
     const comment = this.findingIdToComment.get(data.findingId);
     if (!comment) {
+      logDebug('Review comment controller could not find comment for updated finding', data);
       return;
     }
 
@@ -80,10 +86,20 @@ export class ReviewCommentController implements vscode.Disposable {
   }
 
   private onSessionCleared(): void {
+    logDebug('Review comment controller observed session clear');
     this.clearAllComments();
   }
 
   addComments(uri: vscode.Uri, findings: ReviewFinding[], languageId?: string) {
+    logDebug('Review comment controller adding comments', {
+      uri: uri.toString(),
+      findingCount: findings.length,
+      languageId,
+      severityCounts: findings.reduce<Record<string, number>>((counts, finding) => {
+        counts[finding.severity] = (counts[finding.severity] ?? 0) + 1;
+        return counts;
+      }, {}),
+    });
     this.clearCommentsForFile(uri);
 
     const threads: vscode.CommentThread[] = [];
@@ -123,20 +139,35 @@ export class ReviewCommentController implements vscode.Disposable {
     }
 
     this.threads.set(uri.toString(), threads);
+    logDebug('Review comment controller added comment threads', {
+      uri: uri.toString(),
+      threadCount: threads.length,
+    });
   }
 
   revealFinding(findingId: string): boolean {
     const comment = this.findingIdToComment.get(findingId);
     if (!comment) {
+      logDebug('Review comment controller revealFinding failed: comment not found', {
+        findingId,
+      });
       return false;
     }
 
     const data = this.commentDataMap.get(comment);
     if (!data) {
+      logDebug('Review comment controller revealFinding failed: comment data not found', {
+        findingId,
+      });
       return false;
     }
 
     data.thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
+    logDebug('Review comment controller revealed finding', {
+      findingId,
+      uri: data.uri.toString(),
+      line: data.line,
+    });
     return true;
   }
 
@@ -243,16 +274,28 @@ export class ReviewCommentController implements vscode.Disposable {
   private async acceptFix(comment: vscode.Comment) {
     const data = this.commentDataMap.get(comment);
     if (!data) {
+      logDebug('Accept fix failed: comment data not found');
       vscode.window.showWarningMessage('Comment data not found');
       return;
     }
 
     if (!data.fix) {
+      logDebug('Accept fix skipped: no fix available', {
+        findingId: data.findingId,
+        uri: data.uri.toString(),
+        line: data.line,
+      });
       vscode.window.showWarningMessage('No fix available for this comment');
       return;
     }
 
     try {
+      logDebug('Applying fix from review comment', {
+        findingId: data.findingId,
+        uri: data.uri.toString(),
+        line: data.line,
+        fixChars: data.fix.length,
+      });
       const result = await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
@@ -277,7 +320,18 @@ export class ReviewCommentController implements vscode.Disposable {
       this.findingIdToComment.delete(data.findingId);
 
       vscode.window.showInformationMessage('Fix applied successfully');
+      logDebug('Applied fix from review comment', {
+        findingId: data.findingId,
+        uri: data.uri.toString(),
+        line: data.line,
+      });
     } catch (error) {
+      logDebug('Applying fix from review comment failed', {
+        findingId: data.findingId,
+        uri: data.uri.toString(),
+        line: data.line,
+        error: error instanceof Error ? error.message : String(error),
+      });
       if (error instanceof Error) {
         vscode.window.showErrorMessage(`Failed to apply fix: ${error.message}`);
       }
@@ -287,8 +341,15 @@ export class ReviewCommentController implements vscode.Disposable {
   private rejectComment(comment: vscode.Comment) {
     const data = this.commentDataMap.get(comment);
     if (!data) {
+      logDebug('Reject comment skipped: comment data not found');
       return;
     }
+
+    logDebug('Rejecting review comment', {
+      findingId: data.findingId,
+      uri: data.uri.toString(),
+      line: data.line,
+    });
 
     if (this.store) {
       this.store.updateFindingStatus(data.findingId, 'dismiss');
@@ -302,6 +363,7 @@ export class ReviewCommentController implements vscode.Disposable {
   private async copyComment(comment: vscode.Comment) {
     const data = this.commentDataMap.get(comment);
     if (!data) {
+      logDebug('Copy comment skipped: comment data not found');
       return;
     }
 
@@ -309,15 +371,26 @@ export class ReviewCommentController implements vscode.Disposable {
       ? `${data.title ? `${data.title}\n\n` : ''}${data.message}\n\n${data.fix}`
       : data.message;
     await vscode.env.clipboard.writeText(text);
+    logDebug('Copied review comment to clipboard', {
+      findingId: data.findingId,
+      hasFix: Boolean(data.fix),
+      textChars: text.length,
+    });
   }
 
   private collapseComment(comment: vscode.Comment) {
     const data = this.commentDataMap.get(comment);
     if (!data) {
+      logDebug('Collapse comment skipped: comment data not found');
       return;
     }
 
     data.thread.collapsibleState = vscode.CommentThreadCollapsibleState.Collapsed;
+    logDebug('Collapsed review comment', {
+      findingId: data.findingId,
+      uri: data.uri.toString(),
+      line: data.line,
+    });
   }
 
   private removeThreadFromMap(uri: vscode.Uri, thread: vscode.CommentThread) {
@@ -338,6 +411,10 @@ export class ReviewCommentController implements vscode.Disposable {
     const key = uri.toString();
     const threads = this.threads.get(key);
     if (threads) {
+      logDebug('Clearing review comments for file', {
+        uri: key,
+        threadCount: threads.length,
+      });
       for (const thread of threads) {
         thread.dispose();
       }
@@ -346,6 +423,12 @@ export class ReviewCommentController implements vscode.Disposable {
   }
 
   clearAllComments() {
+    const threadCount = [...this.threads.values()].reduce((total, threads) => total + threads.length, 0);
+    logDebug('Clearing all review comments', {
+      fileCount: this.threads.size,
+      threadCount,
+      findingCommentCount: this.findingIdToComment.size,
+    });
     for (const [, threads] of this.threads) {
       for (const thread of threads) {
         thread.dispose();
@@ -356,6 +439,7 @@ export class ReviewCommentController implements vscode.Disposable {
   }
 
   dispose() {
+    logDebug('Disposing review comment controller');
     this.clearAllComments();
     this.controller.dispose();
     if (this.store) {
