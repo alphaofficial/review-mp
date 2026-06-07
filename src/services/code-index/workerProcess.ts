@@ -12,11 +12,11 @@ type WorkerResponse =
   | { id: number; ok: true; result?: unknown }
   | { id: number; ok: false; error: string };
 
-const workspaceRoot = process.env.REVIEWMP_INDEX_WORKSPACE_ROOT;
-const storageRoot = process.env.REVIEWMP_INDEX_STORAGE_ROOT;
+const workspaceRoot = process.env.CODEBUNNY_INDEX_WORKSPACE_ROOT;
+const storageRoot = process.env.CODEBUNNY_INDEX_STORAGE_ROOT;
 
 if (!workspaceRoot) {
-  throw new Error('REVIEWMP_INDEX_WORKSPACE_ROOT is required');
+  throw new Error('CODEBUNNY_INDEX_WORKSPACE_ROOT is required');
 }
 
 RepoKnowledgeIndex.setDefaultStorageRoot(storageRoot);

@@ -144,7 +144,7 @@ export class ReviewOrchestrator implements vscode.Disposable {
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: `ReviewMP: Running ${typeLabel} review...`,
+        title: `CodeBunny: Running ${typeLabel} review...`,
         cancellable: true,
       },
       async (progress, token) => {
@@ -200,7 +200,7 @@ export class ReviewOrchestrator implements vscode.Disposable {
             }
             this.store.transitionSession('complete');
             vscode.window.showInformationMessage(
-              `ReviewMP: Found ${result.comments.length} comment(s)`
+              `CodeBunny: Found ${result.comments.length} comment(s)`
             );
           } catch (error) {
             if (!this.isRunCurrent(runId, session.id)) {
@@ -223,7 +223,7 @@ export class ReviewOrchestrator implements vscode.Disposable {
                 error: error.message,
               });
               this.store.setSessionError(error.message);
-              vscode.window.showErrorMessage(`ReviewMP Error: ${error.message}`);
+              vscode.window.showErrorMessage(`CodeBunny Error: ${error.message}`);
             }
           }
       }
@@ -249,7 +249,7 @@ export class ReviewOrchestrator implements vscode.Disposable {
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: `ReviewMP: Running review for ${labels[type]}...`,
+        title: `CodeBunny: Running review for ${labels[type]}...`,
         cancellable: true,
       },
       async (progress, token) => {
@@ -326,7 +326,7 @@ export class ReviewOrchestrator implements vscode.Disposable {
 
             this.store.transitionSession('complete');
             vscode.window.showInformationMessage(
-              `ReviewMP: Found ${result.comments.length} comment(s) in ${labels[type]}`
+              `CodeBunny: Found ${result.comments.length} comment(s) in ${labels[type]}`
             );
           } catch (error) {
             if (!this.isRunCurrent(runId, session.id)) {
@@ -351,7 +351,7 @@ export class ReviewOrchestrator implements vscode.Disposable {
                 error: error.message,
               });
               this.store.setSessionError(error.message);
-              vscode.window.showErrorMessage(`ReviewMP Error: ${error.message}`);
+              vscode.window.showErrorMessage(`CodeBunny Error: ${error.message}`);
             }
           }
       }

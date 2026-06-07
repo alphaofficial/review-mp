@@ -30,13 +30,15 @@ export class ReviewCommentController implements vscode.Disposable {
   private findingIdToComment: Map<string, vscode.Comment> = new Map();
   private fixApplicator: FixApplicator;
   private store: ReviewSessionStore | null = null;
+  private readonly authorIconPath: vscode.Uri;
 
   constructor(context: vscode.ExtensionContext, provider?: ModelProvider, fixApplicator?: FixApplicator, store?: ReviewSessionStore) {
     this.fixApplicator = fixApplicator || createFixApplicator();
     this.store = store || null;
+    this.authorIconPath = vscode.Uri.joinPath(context.extensionUri, 'resources', 'codebunny.png');
     this.controller = vscode.comments.createCommentController(
-      'reviewmp',
-      'ReviewMP Comments'
+      'codebunny',
+      'CodeBunny Comments'
     );
 
     this.controller.commentingRangeProvider = undefined;
@@ -45,16 +47,16 @@ export class ReviewCommentController implements vscode.Disposable {
     });
 
     context.subscriptions.push(
-      vscode.commands.registerCommand('reviewmp.acceptFix', (comment: vscode.Comment) =>
+      vscode.commands.registerCommand('codebunny.acceptFix', (comment: vscode.Comment) =>
         this.acceptFix(comment)
       ),
-      vscode.commands.registerCommand('reviewmp.rejectComment', (comment: vscode.Comment) =>
+      vscode.commands.registerCommand('codebunny.rejectComment', (comment: vscode.Comment) =>
         this.rejectComment(comment)
       ),
-      vscode.commands.registerCommand('reviewmp.copyComment', (comment: vscode.Comment) =>
+      vscode.commands.registerCommand('codebunny.copyComment', (comment: vscode.Comment) =>
         this.copyComment(comment)
       ),
-      vscode.commands.registerCommand('reviewmp.collapseComment', (comment: vscode.Comment) =>
+      vscode.commands.registerCommand('codebunny.collapseComment', (comment: vscode.Comment) =>
         this.collapseComment(comment)
       )
     );
@@ -113,8 +115,11 @@ export class ReviewCommentController implements vscode.Disposable {
       const reviewComment: vscode.Comment = {
         body,
         mode: vscode.CommentMode.Preview,
-        author: { name: 'ReviewMP' },
-        contextValue: finding.fix ? 'reviewmp-with-fix' : 'reviewmp',
+        author: {
+          name: 'CodeBunny',
+          iconPath: this.authorIconPath,
+        },
+        contextValue: finding.fix ? 'codebunny-with-fix' : 'codebunny',
       };
 
       const commentData: CommentData = {
@@ -299,7 +304,7 @@ export class ReviewCommentController implements vscode.Disposable {
       const result = await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
-          title: 'ReviewMP: Applying fix...',
+          title: 'CodeBunny: Applying fix...',
           cancellable: false,
         },
         async () => {

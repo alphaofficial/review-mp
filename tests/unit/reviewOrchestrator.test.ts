@@ -150,6 +150,7 @@ describe('ReviewOrchestrator', () => {
     (vscode.comments.createCommentController as any).mockReturnValue(mockController);
 
     mockContext = {
+      extensionUri: vscode.Uri.file('/test/extension'),
       subscriptions: [] as any[],
       workspaceState: {
         get: vi.fn(),
@@ -169,7 +170,7 @@ describe('ReviewOrchestrator', () => {
   });
 
   function createTempWorkspaceFromFixtures(subdirectory: string): string {
-    const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'reviewmp-orchestrator-'));
+    const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'codebunny-orchestrator-'));
     tempRoots.push(tempRoot);
     const source = path.join(process.cwd(), 'tests', 'integration', 'fixtures', subdirectory);
     const target = path.join(tempRoot, subdirectory);
@@ -556,7 +557,7 @@ const Swipeable = React.forwardRef(
 
       expect(provider.cancel).toHaveBeenCalledTimes(1);
       expect(store.getActiveSession()).toBeNull();
-      expect(vscode.window.showErrorMessage).not.toHaveBeenCalledWith('ReviewMP Error: Review cancelled');
+      expect(vscode.window.showErrorMessage).not.toHaveBeenCalledWith('CodeBunny Error: Review cancelled');
     });
 
     it('should cancel stale providers before starting a new review', async () => {
@@ -593,7 +594,7 @@ const Swipeable = React.forwardRef(
       expect(firstProvider.cancel).toHaveBeenCalledTimes(1);
       expect(secondProvider.review).toHaveBeenCalledTimes(1);
       expect(store.getActiveSession()?.status).toBe('completed');
-      expect(vscode.window.showErrorMessage).not.toHaveBeenCalledWith('ReviewMP Error: Review cancelled');
+      expect(vscode.window.showErrorMessage).not.toHaveBeenCalledWith('CodeBunny Error: Review cancelled');
     });
   });
 
@@ -667,7 +668,7 @@ const Swipeable = React.forwardRef(
       expect(secondRequest.diff).not.toContain('diff --git a/src/c.ts b/src/c.ts');
       expect(thirdRequest.diff).toContain('diff --git a/src/c.ts b/src/c.ts');
       expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-        'ReviewMP: Found 3 comment(s) in staged changes'
+        'CodeBunny: Found 3 comment(s) in staged changes'
       );
     });
 
@@ -905,6 +906,7 @@ describe('ReviewCommentController', () => {
     (vscode.comments.createCommentController as any).mockReturnValue(mockController);
 
     mockContext = {
+      extensionUri: vscode.Uri.file('/test/extension'),
       subscriptions: [] as any[],
       workspaceState: {
         get: vi.fn(),

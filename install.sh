@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-echo "ReviewMP Installation Script"
+echo "CodeBunny Installation Script"
 echo "====================================================================="
 
 # Check if Node.js is installed
@@ -39,7 +39,7 @@ if [ ${#AVAILABLE_RUNTIMES[@]} -eq 0 ]; then
 else
     echo "Found runtime CLI(s): ${AVAILABLE_RUNTIMES[*]}"
 fi
-echo "Runtime selection is configured in VS Code via 'ReviewMP: Select Runtime'."
+echo "Runtime selection is configured in VS Code via 'CodeBunny: Select Runtime'."
 
 # Step 1: Install dependencies
 echo ""

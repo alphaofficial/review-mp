@@ -122,10 +122,10 @@ describe('ReviewTreeProvider', () => {
     resetReviewSessionStore();
     store = createReviewSessionStore();
 
-    newReviewProvider = new ReviewTreeProvider('reviewmp.newReview', store);
-    filesProvider = new ReviewTreeProvider('reviewmp.filesToReview', store);
-    reviewsProvider = new ReviewTreeProvider('reviewmp.reviews', store);
-    previousReviewsProvider = new ReviewTreeProvider('reviewmp.previousReviews', store);
+    newReviewProvider = new ReviewTreeProvider('codebunny.newReview', store);
+    filesProvider = new ReviewTreeProvider('codebunny.filesToReview', store);
+    reviewsProvider = new ReviewTreeProvider('codebunny.reviews', store);
+    previousReviewsProvider = new ReviewTreeProvider('codebunny.previousReviews', store);
   });
 
   afterEach(() => {
@@ -166,13 +166,13 @@ describe('ReviewTreeProvider', () => {
         }
       });
 
-      expect(commandMap['reviewmp.reviewAllChanges']).toBe('Review All Changes');
-      expect(commandMap['reviewmp.reviewStaged']).toBe('Review Staged Changes');
-      expect(commandMap['reviewmp.reviewUncommitted']).toBe('Review Uncommitted Changes');
-      expect(commandMap['reviewmp.reviewFile']).toBe('Review Current File');
-      expect(commandMap['reviewmp.reviewSelection']).toBe('Review Current Selection');
-      expect(commandMap['reviewmp.reviewLastCommit']).toBe('Review Last Commit');
-      expect(commandMap['reviewmp.reviewBranch']).toBe('Review Branch Changes');
+      expect(commandMap['codebunny.reviewAllChanges']).toBe('Review All Changes');
+      expect(commandMap['codebunny.reviewStaged']).toBe('Review Staged Changes');
+      expect(commandMap['codebunny.reviewUncommitted']).toBe('Review Uncommitted Changes');
+      expect(commandMap['codebunny.reviewFile']).toBe('Review Current File');
+      expect(commandMap['codebunny.reviewSelection']).toBe('Review Current Selection');
+      expect(commandMap['codebunny.reviewLastCommit']).toBe('Review Last Commit');
+      expect(commandMap['codebunny.reviewBranch']).toBe('Review Branch Changes');
     });
 
     it('should have icons for all new review items', () => {
@@ -332,7 +332,7 @@ describe('ReviewTreeProvider', () => {
       const fileGroup = items[0];
       const findingItem = fileGroup.children![0];
 
-      expect(findingItem.command?.command).toBe('reviewmp.openFinding');
+      expect(findingItem.command?.command).toBe('codebunny.openFinding');
       expect(findingItem.command?.arguments).toEqual([finding!.id]);
     });
 
@@ -394,7 +394,7 @@ describe('ReviewTreeProvider', () => {
       transitionSessionTo(store, 'completed');
 
       const items = previousReviewsProvider.getChildren() as TreeElement[];
-      expect(items[0].command?.command).toBe('reviewmp.openReviewPanel');
+      expect(items[0].command?.command).toBe('codebunny.openReviewPanel');
       expect(items[0].contextValue).toBe('previousReview');
     });
 
@@ -450,7 +450,7 @@ describe('ReviewTreeProvider', () => {
       vi.useFakeTimers();
 
       previousReviewsProvider.dispose();
-      previousReviewsProvider = new ReviewTreeProvider('reviewmp.previousReviews', store);
+      previousReviewsProvider = new ReviewTreeProvider('codebunny.previousReviews', store);
       store.createSession('file');
       transitionSessionTo(store, 'completed');
 
@@ -567,7 +567,7 @@ describe('ReviewTreeProvider', () => {
       const treeItem = newReviewProvider.getTreeItem(items[0]);
 
       expect(treeItem.command).toBeDefined();
-      expect(treeItem.command?.command).toBe('reviewmp.reviewAllChanges');
+      expect(treeItem.command?.command).toBe('codebunny.reviewAllChanges');
     });
   });
 

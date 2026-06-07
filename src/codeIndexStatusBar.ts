@@ -7,11 +7,11 @@ export class CodeIndexStatusBar implements vscode.Disposable {
 
   constructor(controller: CodeIndexController) {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    this.item.command = 'reviewmp.openIndexPanel';
+    this.item.command = 'codebunny.openIndexPanel';
     this.listener = controller.onDidChangeState((state) => {
       this.item.text = `$(database) ${this.getDot(state.status)}`;
       this.item.tooltip = [
-        'ReviewMP Codebase Indexing',
+        'CodeBunny Codebase Indexing',
         `${this.toStatusLabel(state.status)}${state.enabled ? '' : ' (disabled)'}`,
         state.message,
         `Indexed files: ${state.indexedFiles}`,
@@ -22,7 +22,7 @@ export class CodeIndexStatusBar implements vscode.Disposable {
     });
     const initialState = controller.getState();
     this.item.text = `$(database) ${this.getDot(initialState.status)}`;
-    this.item.tooltip = 'ReviewMP Codebase Indexing';
+    this.item.tooltip = 'CodeBunny Codebase Indexing';
     this.item.color = this.getColor(initialState.status);
     this.item.show();
   }

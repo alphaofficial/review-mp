@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 function createTempWorkspaceFromFixtures(subdirectory: string): string {
-  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'reviewmp-context-'));
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'codebunny-context-'));
   tempRoots.push(tempRoot);
   const source = path.join(process.cwd(), 'tests', 'integration', 'fixtures', subdirectory);
   const target = path.join(tempRoot, subdirectory);
@@ -41,8 +41,8 @@ function createTempWorkspaceFromFixtures(subdirectory: string): string {
 
 function seedGitHistory(workspaceRoot: string): void {
   execFileSync('git', ['init'], { cwd: workspaceRoot, stdio: 'ignore' });
-  execFileSync('git', ['config', 'user.name', 'ReviewMP Tests'], { cwd: workspaceRoot, stdio: 'ignore' });
-  execFileSync('git', ['config', 'user.email', 'reviewmp-tests@example.com'], { cwd: workspaceRoot, stdio: 'ignore' });
+  execFileSync('git', ['config', 'user.name', 'CodeBunny Tests'], { cwd: workspaceRoot, stdio: 'ignore' });
+  execFileSync('git', ['config', 'user.email', 'codebunny-tests@example.com'], { cwd: workspaceRoot, stdio: 'ignore' });
   execFileSync('git', ['add', '.'], { cwd: workspaceRoot, stdio: 'ignore' });
   execFileSync('git', ['commit', '-m', 'Initial retrieval fixtures'], { cwd: workspaceRoot, stdio: 'ignore' });
 

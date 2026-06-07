@@ -66,7 +66,7 @@ let codeIndexTreeProvider: CodeIndexTreeProvider | undefined;
 const store = getReviewSessionStore();
 
 export function activate(context: vscode.ExtensionContext) {
-  logDebug('ReviewMP extension activated', {
+  logDebug('CodeBunny extension activated', {
     extensionPath: context.extensionPath,
     subscriptionCount: context.subscriptions.length,
   });
@@ -74,7 +74,7 @@ export function activate(context: vscode.ExtensionContext) {
   const settings = getSettings();
   const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   RepoKnowledgeIndex.setDefaultStorageRoot(context.globalStorageUri?.fsPath);
-  logDebug('ReviewMP activation settings loaded', {
+  logDebug('CodeBunny activation settings loaded', {
     workspaceRoot,
     runtime: settings.runtime,
     model: settings.model,
@@ -110,10 +110,10 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   const viewIds: ReviewTreeViewId[] = [
-    'reviewmp.newReview',
-    'reviewmp.filesToReview',
-    'reviewmp.reviews',
-    'reviewmp.previousReviews'
+    'codebunny.newReview',
+    'codebunny.filesToReview',
+    'codebunny.reviews',
+    'codebunny.previousReviews'
   ];
 
   for (const viewId of viewIds) {
@@ -136,7 +136,7 @@ export function activate(context: vscode.ExtensionContext) {
   codeIndexTreeProvider?.dispose();
   codeIndexTreeProvider = new CodeIndexTreeProvider(codeIndexController);
   context.subscriptions.push(
-    vscode.window.registerTreeDataProvider('reviewmp.indexing', codeIndexTreeProvider),
+    vscode.window.registerTreeDataProvider('codebunny.indexing', codeIndexTreeProvider),
     codeIndexTreeProvider,
     codeIndexController,
     { dispose: () => codeIndexManager?.dispose() }
@@ -170,22 +170,22 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   registerSettingsCommands(context);
-  logDebug('ReviewMP debug logs initialized');
+  logDebug('CodeBunny debug logs initialized');
   showDebugLogs(true);
 
   const reviewFileCommand = vscode.commands.registerCommand(
-    'reviewmp.reviewFile',
+    'codebunny.reviewFile',
     async () => {
-      logDebug('Command invoked: reviewmp.reviewFile');
+      logDebug('Command invoked: codebunny.reviewFile');
       const editor = vscode.window.activeTextEditor;
       if (!editor) {
-        logDebug('Command reviewmp.reviewFile skipped: no active file');
+        logDebug('Command codebunny.reviewFile skipped: no active file');
         vscode.window.showWarningMessage('No active file to review');
         return;
       }
 
       const document = editor.document;
-      logDebug('Command reviewmp.reviewFile dispatching', {
+      logDebug('Command codebunny.reviewFile dispatching', {
         filePath: document.uri.fsPath,
         languageId: document.languageId,
       });
@@ -194,19 +194,19 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   const reviewSelectionCommand = vscode.commands.registerCommand(
-    'reviewmp.reviewSelection',
+    'codebunny.reviewSelection',
     async () => {
-      logDebug('Command invoked: reviewmp.reviewSelection');
+      logDebug('Command invoked: codebunny.reviewSelection');
       const editor = vscode.window.activeTextEditor;
       if (!editor) {
-        logDebug('Command reviewmp.reviewSelection skipped: no active editor');
+        logDebug('Command codebunny.reviewSelection skipped: no active editor');
         vscode.window.showWarningMessage('No active editor');
         return;
       }
 
       const selection = editor.selection;
       if (selection.isEmpty) {
-        logDebug('Command reviewmp.reviewSelection skipped: empty selection');
+        logDebug('Command codebunny.reviewSelection skipped: empty selection');
         vscode.window.showWarningMessage('No text selected');
         return;
       }
@@ -214,7 +214,7 @@ export function activate(context: vscode.ExtensionContext) {
       const document = editor.document;
       const selectedText = document.getText(selection);
       const startLine = selection.start.line;
-      logDebug('Command reviewmp.reviewSelection dispatching', {
+      logDebug('Command codebunny.reviewSelection dispatching', {
         filePath: document.uri.fsPath,
         languageId: document.languageId,
         startLine,
@@ -226,67 +226,67 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   const reviewStagedCommand = vscode.commands.registerCommand(
-    'reviewmp.reviewStaged',
+    'codebunny.reviewStaged',
     async () => {
-      logDebug('Command invoked: reviewmp.reviewStaged');
+      logDebug('Command invoked: codebunny.reviewStaged');
       await orchestrator.reviewStaged();
     }
   );
 
   const reviewUncommittedCommand = vscode.commands.registerCommand(
-    'reviewmp.reviewUncommitted',
+    'codebunny.reviewUncommitted',
     async () => {
-      logDebug('Command invoked: reviewmp.reviewUncommitted');
+      logDebug('Command invoked: codebunny.reviewUncommitted');
       await orchestrator.reviewUncommitted();
     }
   );
 
   const reviewLastCommitCommand = vscode.commands.registerCommand(
-    'reviewmp.reviewLastCommit',
+    'codebunny.reviewLastCommit',
     async () => {
-      logDebug('Command invoked: reviewmp.reviewLastCommit');
+      logDebug('Command invoked: codebunny.reviewLastCommit');
       await orchestrator.reviewLastCommit();
     }
   );
 
   const reviewBranchCommand = vscode.commands.registerCommand(
-    'reviewmp.reviewBranch',
+    'codebunny.reviewBranch',
     async () => {
-      logDebug('Command invoked: reviewmp.reviewBranch');
+      logDebug('Command invoked: codebunny.reviewBranch');
       await orchestrator.reviewBranch();
     }
   );
 
   const clearCommentsCommand = vscode.commands.registerCommand(
-    'reviewmp.clearComments',
+    'codebunny.clearComments',
     () => {
-      logDebug('Command invoked: reviewmp.clearComments');
+      logDebug('Command invoked: codebunny.clearComments');
       orchestrator.clearComments();
       vscode.window.showInformationMessage('All review comments cleared');
     }
   );
 
   const reviewAllChangesCommand = vscode.commands.registerCommand(
-    'reviewmp.reviewAllChanges',
+    'codebunny.reviewAllChanges',
     async () => {
-      logDebug('Command invoked: reviewmp.reviewAllChanges');
+      logDebug('Command invoked: codebunny.reviewAllChanges');
       await orchestrator.reviewBranch();
     }
   );
 
   const openFindingCommand = vscode.commands.registerCommand(
-    'reviewmp.openFinding',
+    'codebunny.openFinding',
     async (
       arg: string | { finding?: { id: string; line: number; message: string }; file?: { path: string } },
       ...args: unknown[]
     ) => {
-      logDebug('Command invoked: reviewmp.openFinding', {
+      logDebug('Command invoked: codebunny.openFinding', {
         argType: typeof arg,
         extraArgCount: args.length,
       });
       const session = store.getActiveSession();
       if (!session) {
-        logDebug('Command reviewmp.openFinding skipped: no active review');
+        logDebug('Command codebunny.openFinding skipped: no active review');
         vscode.window.showWarningMessage('No active review');
         return;
       }
@@ -309,7 +309,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       if (!finding || !targetFilePath) {
-        logDebug('Command reviewmp.openFinding failed: finding not found', {
+        logDebug('Command codebunny.openFinding failed: finding not found', {
           argType: typeof arg,
         });
         vscode.window.showWarningMessage('Finding not found');
@@ -317,7 +317,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       const uri = resolveReviewFileUri(targetFilePath);
-      logDebug('Command reviewmp.openFinding opening document', {
+      logDebug('Command codebunny.openFinding opening document', {
         findingId: finding.id,
         targetFilePath,
         resolvedPath: uri.fsPath,
@@ -339,18 +339,18 @@ export function activate(context: vscode.ExtensionContext) {
   const fixApplicator: FixApplicator = createFixApplicator();
 
   const applyFindingFixCommand = vscode.commands.registerCommand(
-    'reviewmp.applyFindingFix',
+    'codebunny.applyFindingFix',
     async (
       arg: string | { finding?: { id: string; fix?: string; line: number; message: string }; file?: { path: string } },
       ...args: unknown[]
     ) => {
-      logDebug('Command invoked: reviewmp.applyFindingFix', {
+      logDebug('Command invoked: codebunny.applyFindingFix', {
         argType: typeof arg,
         extraArgCount: args.length,
       });
       const session = store.getActiveSession();
       if (!session) {
-        logDebug('Command reviewmp.applyFindingFix skipped: no active review');
+        logDebug('Command codebunny.applyFindingFix skipped: no active review');
         vscode.window.showWarningMessage('No active review');
         return;
       }
@@ -364,7 +364,7 @@ export function activate(context: vscode.ExtensionContext) {
       } else if (arg && typeof arg === 'object' && arg.finding) {
         findingId = arg.finding.id;
       } else {
-        logDebug('Command reviewmp.applyFindingFix failed: invalid argument');
+        logDebug('Command codebunny.applyFindingFix failed: invalid argument');
         vscode.window.showWarningMessage('Finding not found');
         return;
       }
@@ -379,7 +379,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       if (!finding || !finding.fix) {
-        logDebug('Command reviewmp.applyFindingFix failed: finding or fix unavailable', {
+        logDebug('Command codebunny.applyFindingFix failed: finding or fix unavailable', {
           findingId,
           hasFinding: Boolean(finding),
           hasFix: Boolean(finding?.fix),
@@ -389,7 +389,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       if (!filePath) {
-        logDebug('Command reviewmp.applyFindingFix failed: file path not found', {
+        logDebug('Command codebunny.applyFindingFix failed: file path not found', {
           findingId,
         });
         vscode.window.showWarningMessage('File path not found');
@@ -397,7 +397,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       try {
-        logDebug('Command reviewmp.applyFindingFix applying fix', {
+        logDebug('Command codebunny.applyFindingFix applying fix', {
           findingId,
           filePath,
           line: finding.line,
@@ -407,12 +407,12 @@ export function activate(context: vscode.ExtensionContext) {
         if (result.success) {
           store.updateFindingStatus(findingId, 'apply');
           vscode.window.showInformationMessage('Fix applied successfully');
-          logDebug('Command reviewmp.applyFindingFix succeeded', {
+          logDebug('Command codebunny.applyFindingFix succeeded', {
             findingId,
             filePath,
           });
         } else {
-          logDebug('Command reviewmp.applyFindingFix failed from applicator result', {
+          logDebug('Command codebunny.applyFindingFix failed from applicator result', {
             findingId,
             filePath,
             error: result.error,
@@ -420,7 +420,7 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showErrorMessage(`Failed to apply fix: ${result.error}`);
         }
       } catch (error) {
-        logDebug('Command reviewmp.applyFindingFix threw', {
+        logDebug('Command codebunny.applyFindingFix threw', {
           findingId,
           filePath,
           error: error instanceof Error ? error.message : String(error),
@@ -431,15 +431,15 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   const dismissFindingCommand = vscode.commands.registerCommand(
-    'reviewmp.dismissFinding',
+    'codebunny.dismissFinding',
     async (arg: string | { finding?: { id: string } }, ...args: unknown[]) => {
-      logDebug('Command invoked: reviewmp.dismissFinding', {
+      logDebug('Command invoked: codebunny.dismissFinding', {
         argType: typeof arg,
         extraArgCount: args.length,
       });
       const session = store.getActiveSession();
       if (!session) {
-        logDebug('Command reviewmp.dismissFinding skipped: no active review');
+        logDebug('Command codebunny.dismissFinding skipped: no active review');
         vscode.window.showWarningMessage('No active review');
         return;
       }
@@ -451,14 +451,14 @@ export function activate(context: vscode.ExtensionContext) {
       } else if (arg && typeof arg === 'object' && arg.finding) {
         findingId = arg.finding.id;
       } else {
-        logDebug('Command reviewmp.dismissFinding failed: invalid argument');
+        logDebug('Command codebunny.dismissFinding failed: invalid argument');
         vscode.window.showWarningMessage('Finding not found');
         return;
       }
 
       const finding = store.getFinding(findingId);
       if (!finding) {
-        logDebug('Command reviewmp.dismissFinding failed: finding not found in active review', {
+        logDebug('Command codebunny.dismissFinding failed: finding not found in active review', {
           findingId,
         });
         vscode.window.showWarningMessage('Finding not found in active review');
@@ -466,30 +466,30 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       store.updateFindingStatus(findingId, 'dismiss');
-      logDebug('Command reviewmp.dismissFinding succeeded', {
+      logDebug('Command codebunny.dismissFinding succeeded', {
         findingId,
       });
     }
   );
 
   const clearActiveReviewCommand = vscode.commands.registerCommand(
-    'reviewmp.clearActiveReview',
+    'codebunny.clearActiveReview',
     async () => {
-      logDebug('Command invoked: reviewmp.clearActiveReview');
+      logDebug('Command invoked: codebunny.clearActiveReview');
       orchestrator.clearActiveReview();
     }
   );
 
   const openReviewPanelCommand = vscode.commands.registerCommand(
-    'reviewmp.openReviewPanel',
+    'codebunny.openReviewPanel',
     async (sessionId?: string) => {
-      logDebug('Command invoked: reviewmp.openReviewPanel', {
+      logDebug('Command invoked: codebunny.openReviewPanel', {
         sessionId,
       });
       if (sessionId) {
         const restoredSession = store.restoreSessionFromHistory(sessionId);
         if (!restoredSession) {
-          logDebug('Command reviewmp.openReviewPanel failed: previous review not found', {
+          logDebug('Command codebunny.openReviewPanel failed: previous review not found', {
             sessionId,
           });
           vscode.window.showWarningMessage('Previous review not found');
@@ -497,7 +497,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         commentController.clearAllComments();
-        logDebug('Command reviewmp.openReviewPanel restoring comments', {
+        logDebug('Command codebunny.openReviewPanel restoring comments', {
           sessionId,
           fileCount: restoredSession.files.size,
           findingCount: restoredSession.findings.length,
@@ -509,46 +509,46 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
 
-      await vscode.commands.executeCommand('reviewmp.reviews.focus');
+      await vscode.commands.executeCommand('codebunny.reviews.focus');
     }
   );
 
   const enableCodeIndexCommand = vscode.commands.registerCommand(
-    'reviewmp.enableCodeIndex',
+    'codebunny.enableCodeIndex',
     async () => {
-      logDebug('Command invoked: reviewmp.enableCodeIndex');
+      logDebug('Command invoked: codebunny.enableCodeIndex');
       await codeIndexController?.setEnabled(true);
     }
   );
 
   const disableCodeIndexCommand = vscode.commands.registerCommand(
-    'reviewmp.disableCodeIndex',
+    'codebunny.disableCodeIndex',
     async () => {
-      logDebug('Command invoked: reviewmp.disableCodeIndex');
+      logDebug('Command invoked: codebunny.disableCodeIndex');
       await codeIndexController?.setEnabled(false);
     }
   );
 
   const rebuildCodeIndexCommand = vscode.commands.registerCommand(
-    'reviewmp.rebuildCodeIndex',
+    'codebunny.rebuildCodeIndex',
     async () => {
-      logDebug('Command invoked: reviewmp.rebuildCodeIndex');
+      logDebug('Command invoked: codebunny.rebuildCodeIndex');
       await codeIndexController?.rebuild();
     }
   );
 
   const stopCodeIndexCommand = vscode.commands.registerCommand(
-    'reviewmp.stopCodeIndex',
+    'codebunny.stopCodeIndex',
     async () => {
-      logDebug('Command invoked: reviewmp.stopCodeIndex');
+      logDebug('Command invoked: codebunny.stopCodeIndex');
       await codeIndexController?.stop();
     }
   );
 
   const clearCodeIndexCommand = vscode.commands.registerCommand(
-    'reviewmp.clearCodeIndex',
+    'codebunny.clearCodeIndex',
     async () => {
-      logDebug('Command invoked: reviewmp.clearCodeIndex');
+      logDebug('Command invoked: codebunny.clearCodeIndex');
       await codeIndexController?.clear();
     }
   );
@@ -593,7 +593,7 @@ function resolveReviewFileUri(filePath: string): vscode.Uri {
 }
 
 export function deactivate() {
-  logDebug('ReviewMP extension deactivating', {
+  logDebug('CodeBunny extension deactivating', {
     treeProviderCount: treeProviders.length,
     hasGitWatcher: Boolean(gitWatcher),
     hasCommentController: Boolean(commentController),

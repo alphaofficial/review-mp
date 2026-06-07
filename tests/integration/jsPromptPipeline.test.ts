@@ -75,6 +75,13 @@ vi.mock('vscode', () => {
         fsPath,
         toString: () => fsPath,
       })),
+      joinPath: vi.fn().mockImplementation((base: { fsPath: string }, ...segments: string[]) => {
+        const fsPath = [base.fsPath, ...segments].join('/').replace(/\/+/g, '/');
+        return {
+          fsPath,
+          toString: () => fsPath,
+        };
+      }),
     },
     Range: MockRange,
     MarkdownString: MockMarkdownString,
@@ -133,6 +140,7 @@ describe('JS file review line mapping', () => {
     const [firstOccurrence, secondOccurrence] = getFeatureFlagLines(code);
 
     const context = {
+      extensionUri: { fsPath: '/test/extension', toString: () => '/test/extension' },
       subscriptions: [],
     };
 

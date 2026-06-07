@@ -2,7 +2,7 @@
   <img src="https://images.pexels.com/photos/7988747/pexels-photo-7988747.jpeg?auto=compress&cs=tinysrgb&w=1600" alt="Developers reviewing code on a large screen" width="100%">
 </p>
 
-# ReviewMP
+# CodeBunny
 
 <p align="center">
   <img alt="Version" src="https://img.shields.io/badge/version-0.0.1-2f6fed">
@@ -51,7 +51,7 @@ A runtime-agnostic AI code review harness for VS Code with inline comments.
 ### 1. Build the Extension
 
 ```bash
-cd reviewmp
+cd codebunny
 npm install
 npm run compile
 ```
@@ -61,13 +61,13 @@ npm run compile
 **Option A: Install latest VSIX from GitHub Releases**
 
 ```bash
-curl -L https://github.com/alphaofficial/review-mp/releases/latest/download/reviewmp.vsix -o /tmp/reviewmp.vsix && code --install-extension /tmp/reviewmp.vsix
+curl -L https://github.com/alphaofficial/codebunny/releases/latest/download/codebunny.vsix -o /tmp/codebunny.vsix && code --install-extension /tmp/codebunny.vsix
 ```
 
 Stable VSIX URL:
 
 ```text
-https://github.com/alphaofficial/review-mp/releases/latest/download/reviewmp.vsix
+https://github.com/alphaofficial/codebunny/releases/latest/download/codebunny.vsix
 ```
 
 **Option B: Development mode**
@@ -104,11 +104,11 @@ If the automated script doesn't work, you can run these steps manually:
    ```bash
    npx @vscode/vsce package
    ```
-   This creates `reviewmp-<version>.vsix`
+   This creates `codebunny-<version>.vsix`
 
 3. Install in VS Code:
    ```bash
-   code --install-extension reviewmp-<version>.vsix
+   code --install-extension codebunny-<version>.vsix
    ```
 
 4. Reload VS Code:
@@ -120,14 +120,14 @@ If the automated script doesn't work, you can run these steps manually:
 Open Command Palette and select a runtime:
 
 ```
-ReviewMP: Select Runtime
+CodeBunny: Select Runtime
 ```
 
 ## Usage
 
 1. Open a file in VS Code
 2. Open Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
-3. Run a review command (e.g., `ReviewMP: Review Current File`)
+3. Run a review command (e.g., `CodeBunny: Review Current File`)
 4. Wait for the AI to analyze your code
 5. Review comments appear inline with Accept/Reject options
 
@@ -135,33 +135,33 @@ ReviewMP: Select Runtime
 
 | Command | Description |
 |---------|-------------|
-| `ReviewMP: Review Current File` | Review the entire active file |
-| `ReviewMP: Review Selection` | Review only the selected code |
-| `ReviewMP: Review Staged Changes` | Review git staged changes (`git diff --cached`) |
-| `ReviewMP: Review Uncommitted Changes` | Review all uncommitted changes (`git diff`) |
-| `ReviewMP: Review Last Commit` | Review the last commit (`git diff HEAD~1`) |
-| `ReviewMP: Review Branch Changes` | Review all commits on current branch vs base |
-| `ReviewMP: Review Pull Request` | Review PR with clustered passes |
-| `ReviewMP: Clear All Comments` | Remove all review comments |
-| `ReviewMP: Select Runtime` | Choose AI runtime |
-| `ReviewMP: Show Debug Logs` | Open the ReviewMP output channel |
+| `CodeBunny: Review Current File` | Review the entire active file |
+| `CodeBunny: Review Selection` | Review only the selected code |
+| `CodeBunny: Review Staged Changes` | Review git staged changes (`git diff --cached`) |
+| `CodeBunny: Review Uncommitted Changes` | Review all uncommitted changes (`git diff`) |
+| `CodeBunny: Review Last Commit` | Review the last commit (`git diff HEAD~1`) |
+| `CodeBunny: Review Branch Changes` | Review all commits on current branch vs base |
+| `CodeBunny: Review Pull Request` | Review PR with clustered passes |
+| `CodeBunny: Clear All Comments` | Remove all review comments |
+| `CodeBunny: Select Runtime` | Choose AI runtime |
+| `CodeBunny: Show Debug Logs` | Open the CodeBunny output channel |
 
 ## Configuration
 
 Settings can be configured via:
 
-1. **VS Code Settings UI**: Open Settings (`Cmd+,` / `Ctrl+,`), search for "reviewmp"
+1. **VS Code Settings UI**: Open Settings (`Cmd+,` / `Ctrl+,`), search for "codebunny"
 2. **settings.json**: Add to your user or workspace settings
 3. **Workspace settings**: Create `.vscode/settings.json` in your project
 
 Example `settings.json`:
 ```json
 {
-  "reviewmp.runtime": "claude",
-  "reviewmp.model": "claude-sonnet-4-20250514",
-  "reviewmp.autoReviewOnStage": true,
-  "reviewmp.autoReviewOnCommit": false,
-  "reviewmp.reviewConcurrency": 5
+  "codebunny.runtime": "claude",
+  "codebunny.model": "claude-sonnet-4-20250514",
+  "codebunny.autoReviewOnStage": true,
+  "codebunny.autoReviewOnCommit": false,
+  "codebunny.reviewConcurrency": 5
 }
 ```
 
@@ -169,14 +169,14 @@ Example `settings.json`:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `reviewmp.runtime` | `opencode` | Runtime: `claude`, `copilot`, `codex`, `gemini`, `hermes`, `pi`, `opencode` |
-| `reviewmp.model` | (empty) | Model override. Leave empty for runtime default. |
-| `reviewmp.autoReviewOnStage` | `false` | Automatically review when files are staged |
-| `reviewmp.autoReviewOnCommit` | `false` | Prompt to review before commit |
-| `reviewmp.codeIndexEnabled` | `true` | Enable repository indexing for related-code retrieval and review memory |
-| `reviewmp.reviewConcurrency` | `5` | Maximum number of diff file review scopes to run in parallel |
-| `reviewmp.executableOverride` | (empty) | Override the selected runtime executable path |
-| `reviewmp.extraArgs` | (empty) | Additional arguments passed to the selected runtime |
+| `codebunny.runtime` | `opencode` | Runtime: `claude`, `copilot`, `codex`, `gemini`, `hermes`, `pi`, `opencode` |
+| `codebunny.model` | (empty) | Model override. Leave empty for runtime default. |
+| `codebunny.autoReviewOnStage` | `false` | Automatically review when files are staged |
+| `codebunny.autoReviewOnCommit` | `false` | Prompt to review before commit |
+| `codebunny.codeIndexEnabled` | `true` | Enable repository indexing for related-code retrieval and review memory |
+| `codebunny.reviewConcurrency` | `5` | Maximum number of diff file review scopes to run in parallel |
+| `codebunny.executableOverride` | (empty) | Override the selected runtime executable path |
+| `codebunny.extraArgs` | (empty) | Additional arguments passed to the selected runtime |
 
 ### Runtime-Specific Settings
 
@@ -184,40 +184,40 @@ Each runtime may support additional optional settings:
 
 ```json
 {
-  "reviewmp.runtime": "claude",
-  "reviewmp.model": "claude-sonnet-4-20250514",
-  "reviewmp.claudeExecutable": "/usr/local/bin/claude",
-  "reviewmp.claudeExtraArgs": "--no-input"
+  "codebunny.runtime": "claude",
+  "codebunny.model": "claude-sonnet-4-20250514",
+  "codebunny.claudeExecutable": "/usr/local/bin/claude",
+  "codebunny.claudeExtraArgs": "--no-input"
 }
 ```
 
 | Setting | Description |
 |---------|-------------|
-| `reviewmp.<runtime>Executable` | Override the runtime executable path |
-| `reviewmp.<runtime>ExtraArgs` | Additional arguments passed to the runtime |
+| `codebunny.<runtime>Executable` | Override the runtime executable path |
+| `codebunny.<runtime>ExtraArgs` | Additional arguments passed to the runtime |
 
 ### Runtime Configuration Examples
 
 **Claude** (default):
 ```json
 {
-  "reviewmp.runtime": "claude",
-  "reviewmp.model": "claude-sonnet-4-20250514"
+  "codebunny.runtime": "claude",
+  "codebunny.model": "claude-sonnet-4-20250514"
 }
 ```
 
 **OpenCode**:
 ```json
 {
-  "reviewmp.runtime": "opencode"
+  "codebunny.runtime": "opencode"
 }
 ```
 
 **Copilot**:
 ```json
 {
-  "reviewmp.runtime": "copilot",
-  "reviewmp.model": "gpt-4o"
+  "codebunny.runtime": "copilot",
+  "codebunny.model": "gpt-4o"
 }
 ```
 
@@ -234,10 +234,10 @@ Both are disabled by default. The extension only activates on startup if one of 
 
 ## Architecture
 
-ReviewMP uses a runtime-agnostic architecture:
+CodeBunny uses a runtime-agnostic architecture:
 
 ```
-ReviewMP Command → ReviewOrchestrator → ReviewHarness → RuntimeAdapter → Runtime
+CodeBunny Command → ReviewOrchestrator → ReviewHarness → RuntimeAdapter → Runtime
                                               ↓
                                       ToolExecutor (read-only)
                                               ↓
@@ -250,13 +250,13 @@ ReviewMP Command → ReviewOrchestrator → ReviewHarness → RuntimeAdapter →
 - **ToolExecutor**: Read-only tools for context gathering
 - **ContextCollector**: Git diff, branch detection, file reading
 
-ReviewMP is provider-agnostic - the same review workflow runs identically regardless of which runtime is selected. Authentication and runtime management are handled by the external runtime itself.
+CodeBunny is provider-agnostic - the same review workflow runs identically regardless of which runtime is selected. Authentication and runtime management are handled by the external runtime itself.
 
 ## Execution Trace
 
 For `Review Current File`, the exact path is:
 
-1. You trigger `reviewmp.reviewFile` from the command palette, context menu, or tree view. That command is registered in [src/extension.ts](src/extension.ts) and forwards the active document to `orchestrator.reviewFile(...)`.
+1. You trigger `codebunny.reviewFile` from the command palette, context menu, or tree view. That command is registered in [src/extension.ts](src/extension.ts) and forwards the active document to `orchestrator.reviewFile(...)`.
 2. `ReviewOrchestrator.reviewFile()` turns the document into a `ReviewRequest` with `code`, `languageId`, `filePath`, and `reviewType: 'file'` in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
 3. `reviewCode()` starts a new run, creates a session in the store, records the file as pending, and moves the session through `settingUp -> analyzing` in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts) and [src/store/reviewSessionStore.ts](src/store/reviewSessionStore.ts).
 4. Because this is a file review, it calls `reviewPreparedFile()` in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
@@ -275,7 +275,7 @@ For `Review Staged Changes` / `Review Branch Changes`, the flow is the same unti
 3. During analysis, the orchestrator asks `DiffContextCollector` for the full diff, then calls `reviewPlannedDiff(...)` in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts) and [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
 4. `reviewPlannedDiff()` parses the diff into final reviewable files, creates one scope per file, fingerprints the whole diff and each unit, and can reuse exact cached results at both the whole-review and per-file-scope level in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts) and [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
 5. It builds one shared diff context envelope with the diff manifest, change map, related retrieval context, review memory, and repo summary in [src/harness/contextRetriever.ts](src/harness/contextRetriever.ts). It then generates one review-level change brief from that shared context.
-6. File scopes are reviewed in parallel up to `reviewmp.reviewConcurrency`, each receiving its own target diff plus the shared context and change brief. Findings are deduped and severity-sorted by `synthesizeReviewComments(...)` in [src/harness/reviewSynthesizer.ts](src/harness/reviewSynthesizer.ts).
+6. File scopes are reviewed in parallel up to `codebunny.reviewConcurrency`, each receiving its own target diff plus the shared context and change brief. Findings are deduped and severity-sorted by `synthesizeReviewComments(...)` in [src/harness/reviewSynthesizer.ts](src/harness/reviewSynthesizer.ts).
 7. `addDiffComments()` groups findings by file and renders inline comment threads into the real workspace files in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
 
 The UI state you see in the side panel is all store-driven. The `NEW REVIEW`, `FILES`, `REVIEWS`, and `PREVIOUS REVIEWS` trees read directly from `ReviewSessionStore` in [src/reviewTreeProvider.ts](src/reviewTreeProvider.ts). So the extension is effectively:
@@ -309,7 +309,7 @@ Sometimes you want to install a local VSIX on a remote machine, either during de
 
 Resolution: Once you have connected to an SSH host, container, or WSL, you can install the VSIX the same way you would locally. Run the Extensions: Install from VSIX... command from the Command Palette (F1). You may also want to add "extensions.autoUpdate": false to settings.json to prevent auto-updating to the latest Marketplace version. See Supporting Remote Development for more information on developing and testing extensions in a remote environment.
 
-For remote run: `code --install-extension /path/to/reviewmp-<version>.vsix`
+For remote run: `code --install-extension /path/to/codebunny-<version>.vsix`
 
 [VSCode Docs](https://code.visualstudio.com/docs/remote/troubleshooting#_extension-tips)
 

@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 function createTempWorkspaceFromFixtures(subdirectory: string): string {
-  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'reviewmp-index-'));
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'codebunny-index-'));
   tempRoots.push(tempRoot);
   const source = path.join(process.cwd(), 'tests', 'integration', 'fixtures', subdirectory);
   const target = path.join(tempRoot, subdirectory);
@@ -107,7 +107,7 @@ describe('RepoKnowledgeIndex', () => {
   });
 
   it('ignores incremental candidates inside ignored directories', async () => {
-    const workspaceRoot = mkdtempSync(path.join(os.tmpdir(), 'reviewmp-index-'));
+    const workspaceRoot = mkdtempSync(path.join(os.tmpdir(), 'codebunny-index-'));
     tempRoots.push(workspaceRoot);
     mkdirSync(path.join(workspaceRoot, 'node_modules', 'pkg'), { recursive: true });
     writeFileSync(
@@ -143,7 +143,7 @@ describe('RepoKnowledgeIndex', () => {
   });
 
   it('persists multi-language declarations and relationships in the code graph', async () => {
-    const workspaceRoot = mkdtempSync(path.join(os.tmpdir(), 'reviewmp-index-'));
+    const workspaceRoot = mkdtempSync(path.join(os.tmpdir(), 'codebunny-index-'));
     tempRoots.push(workspaceRoot);
     writeFileSync(
       path.join(workspaceRoot, 'service.py'),
@@ -174,7 +174,7 @@ class Service:
     const metadataBefore = await index.getIndexMetadata();
     expect(metadataBefore?.status).toBe('ready');
 
-    const connection = await lancedb.connect(path.join(workspaceRoot, '.reviewmp', 'lancedb'));
+    const connection = await lancedb.connect(path.join(workspaceRoot, '.codebunny', 'lancedb'));
     const metadataTable = await connection.openTable('index_metadata');
     await metadataTable.update({
       where: `repositoryId = '${metadataBefore?.repositoryId}'`,
@@ -213,7 +213,7 @@ class Service:
       });
     }
 
-    const connection = await lancedb.connect(path.join(workspaceRoot, '.reviewmp', 'lancedb'));
+    const connection = await lancedb.connect(path.join(workspaceRoot, '.codebunny', 'lancedb'));
     const table = await connection.openTable('review_comments');
     const rows = await table.query().toArray() as Array<{ id: string }>;
     connection.close();

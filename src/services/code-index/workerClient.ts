@@ -37,8 +37,8 @@ export class CodeIndexWorkerClient implements CodeIndexBackend {
       stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
       env: {
         ...process.env,
-        REVIEWMP_INDEX_WORKSPACE_ROOT: workspaceRoot,
-        REVIEWMP_INDEX_STORAGE_ROOT: storageRoot ?? '',
+        CODEBUNNY_INDEX_WORKSPACE_ROOT: workspaceRoot,
+        CODEBUNNY_INDEX_STORAGE_ROOT: storageRoot ?? '',
       },
     });
 

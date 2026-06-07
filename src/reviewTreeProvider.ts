@@ -18,7 +18,7 @@ export interface TreeElement {
   session?: ReviewSession;
 }
 
-export type ReviewTreeViewId = 'reviewmp.newReview' | 'reviewmp.filesToReview' | 'reviewmp.reviews' | 'reviewmp.previousReviews';
+export type ReviewTreeViewId = 'codebunny.newReview' | 'codebunny.filesToReview' | 'codebunny.reviews' | 'codebunny.previousReviews';
 
 export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> {
   private viewId: ReviewTreeViewId;
@@ -48,7 +48,7 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
   }
 
   private startTimeAgoRefresh(): void {
-    if (this.viewId !== 'reviewmp.previousReviews') {
+    if (this.viewId !== 'codebunny.previousReviews') {
       return;
     }
 
@@ -101,13 +101,13 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
 
   private getRootChildren(): TreeElement[] {
     switch (this.viewId) {
-      case 'reviewmp.newReview':
+      case 'codebunny.newReview':
         return this.getNewReviewItems();
-      case 'reviewmp.filesToReview':
+      case 'codebunny.filesToReview':
         return this.getFilesToReviewItems();
-      case 'reviewmp.reviews':
+      case 'codebunny.reviews':
         return this.getReviewsItems();
-      case 'reviewmp.previousReviews':
+      case 'codebunny.previousReviews':
         return this.getPreviousReviewsItems();
       default:
         return [];
@@ -129,7 +129,7 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
           id: 'clear-active-review',
           label: 'Stop Review',
           icon: 'debug-stop',
-          command: { command: 'reviewmp.clearActiveReview', title: 'Stop Review' },
+          command: { command: 'codebunny.clearActiveReview', title: 'Stop Review' },
         },
       ];
     }
@@ -139,43 +139,43 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
         id: 'review-all-changes',
         label: 'Review All Changes',
         icon: 'git-compare',
-        command: { command: 'reviewmp.reviewAllChanges', title: 'Review All Changes' },
+        command: { command: 'codebunny.reviewAllChanges', title: 'Review All Changes' },
       },
       {
         id: 'review-staged',
         label: 'Review Staged Changes',
         icon: 'diff-added',
-        command: { command: 'reviewmp.reviewStaged', title: 'Review Staged Changes' },
+        command: { command: 'codebunny.reviewStaged', title: 'Review Staged Changes' },
       },
       {
         id: 'review-uncommitted',
         label: 'Review Uncommitted Changes',
         icon: 'diff-modified',
-        command: { command: 'reviewmp.reviewUncommitted', title: 'Review Uncommitted Changes' },
+        command: { command: 'codebunny.reviewUncommitted', title: 'Review Uncommitted Changes' },
       },
       {
         id: 'review-current-file',
         label: 'Review Current File',
         icon: 'file',
-        command: { command: 'reviewmp.reviewFile', title: 'Review Current File' },
+        command: { command: 'codebunny.reviewFile', title: 'Review Current File' },
       },
       {
         id: 'review-selection',
         label: 'Review Current Selection',
         icon: 'selection',
-        command: { command: 'reviewmp.reviewSelection', title: 'Review Current Selection' },
+        command: { command: 'codebunny.reviewSelection', title: 'Review Current Selection' },
       },
       {
         id: 'review-last-commit',
         label: 'Review Last Commit',
         icon: 'git-commit',
-        command: { command: 'reviewmp.reviewLastCommit', title: 'Review Last Commit' },
+        command: { command: 'codebunny.reviewLastCommit', title: 'Review Last Commit' },
       },
       {
         id: 'review-branch',
         label: 'Review Branch Changes',
         icon: 'git-branch',
-        command: { command: 'reviewmp.reviewBranch', title: 'Review Branch Changes' },
+        command: { command: 'codebunny.reviewBranch', title: 'Review Branch Changes' },
       },
     ];
   }
@@ -309,7 +309,7 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
       finding,
       contextValue: finding.fix ? 'findingWithFix' : 'finding',
       command: {
-        command: 'reviewmp.openFinding',
+        command: 'codebunny.openFinding',
         title: 'Open Finding',
         arguments: [finding.id],
       },
@@ -343,7 +343,7 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<TreeElement> 
       historyEntry: entry,
       contextValue: 'previousReview',
       command: {
-        command: 'reviewmp.openReviewPanel',
+        command: 'codebunny.openReviewPanel',
         title: 'Open Review',
         arguments: [entry.sessionId],
       },

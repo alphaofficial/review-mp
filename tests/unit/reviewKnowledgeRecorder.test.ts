@@ -45,7 +45,7 @@ afterEach(async () => {
 });
 
 function createTempWorkspace(): string {
-  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'reviewmp-recorder-'));
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'codebunny-recorder-'));
   tempRoots.push(tempRoot);
   writeFileSync(path.join(tempRoot, 'service.ts'), 'export function buildService() { return true; }\n');
   return tempRoot;

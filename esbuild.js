@@ -24,6 +24,28 @@ const external = [
   'node-gyp-build',
 ];
 
+const esbuildProblemMatcherPlugin = {
+  name: 'esbuild-problem-matcher',
+  setup(build) {
+    build.onStart(() => {
+      console.log('[watch] build started');
+    });
+
+    build.onEnd((result) => {
+      for (const { text, location } of result.errors) {
+        console.error(`✘ [ERROR] ${text}`);
+        if (!location) {
+          continue;
+        }
+
+        console.error(`    ${location.file}:${location.line}:${location.column}:`);
+      }
+
+      console.log('[watch] build finished');
+    });
+  },
+};
+
 async function main() {
   if (!watch) {
     fs.rmSync(path.join(__dirname, 'out'), { recursive: true, force: true });
@@ -37,7 +59,7 @@ async function main() {
     target: 'node20',
     outfile: 'out/extension.js',
     define: {
-      __REVIEWMP_PROD__: JSON.stringify(production),
+      __CODEBUNNY_PROD__: JSON.stringify(production),
     },
     external,
     sourcemap: production ? false : true,
@@ -45,6 +67,7 @@ async function main() {
     sourcesContent: !production,
     logLevel: 'info',
     legalComments: 'none',
+    plugins: [esbuildProblemMatcherPlugin],
   });
 
   if (watch) {

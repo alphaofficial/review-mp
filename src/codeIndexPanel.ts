@@ -15,8 +15,8 @@ export class CodeIndexPanel implements vscode.Disposable {
     }
 
     this.panel = vscode.window.createWebviewPanel(
-      'reviewmp.codeIndex',
-      'ReviewMP Codebase Indexing',
+      'codebunny.codeIndex',
+      'CodeBunny Codebase Indexing',
       vscode.ViewColumn.Active,
       {
         enableScripts: true,
@@ -71,7 +71,7 @@ export class CodeIndexPanel implements vscode.Disposable {
       type: 'indexState',
       value: serializeState(state),
     });
-    this.panel.title = `ReviewMP Codebase Indexing${state.enabled ? '' : ' (Disabled)'}`;
+    this.panel.title = `CodeBunny Codebase Indexing${state.enabled ? '' : ' (Disabled)'}`;
   }
 
   private render(state: CodeIndexViewState): string {
@@ -81,7 +81,7 @@ export class CodeIndexPanel implements vscode.Disposable {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ReviewMP Codebase Indexing</title>
+    <title>CodeBunny Codebase Indexing</title>
     <style>
       :root {
         color-scheme: light dark;
@@ -195,7 +195,7 @@ export class CodeIndexPanel implements vscode.Disposable {
     <div class="panel">
       <div class="header">
         <h1>Codebase Indexing</h1>
-        <p>ReviewMP maintains a local repo index for retrieval, review memory, and related-code lookup.</p>
+        <p>CodeBunny maintains a local repo index for retrieval, review memory, and related-code lookup.</p>
       </div>
       <div class="body">
         <div class="status">

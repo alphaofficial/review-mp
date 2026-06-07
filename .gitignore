@@ -36,5 +36,5 @@ coverage/
 *.temp
 .cache/
 
-# Legacy repo-local ReviewMP index storage
-.reviewmp/
+# Legacy repo-local CodeBunny index storage
+.codebunny/

@@ -19,7 +19,7 @@ install.sh
 PRD.md
 STATUS.md
 TASKS.md
-ReviewMP.log
+CodeBunny.log
 spec.md
 node_modules/**
 !node_modules/@lancedb/
