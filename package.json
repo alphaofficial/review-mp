@@ -297,7 +297,6 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "npm run typecheck && node esbuild.js --production",
-    "watch": "node esbuild.js --watch",
     "typecheck": "tsc --noEmit -p ./",
     "lint": "eslint src --ext ts",
     "test": "vitest run",
