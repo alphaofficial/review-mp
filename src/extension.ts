@@ -11,7 +11,6 @@ import { ReviewRequest } from './types/review';
 import { getSettings, initializeCodeIndexSettingsState, logDebug, registerSettingsCommands, showDebugLogs } from './settings';
 import { ReviewTreeProvider, ReviewTreeViewId } from './reviewTreeProvider';
 import { getReviewSessionStore } from './store/reviewSessionStore';
-import { FixApplicator, createFixApplicator } from './harness/fixApplicator';
 import { ReviewDecorationController } from './reviewDecorationController';
 import { ReviewKnowledgeRecorder } from './harness/reviewKnowledgeRecorder';
 import { CodeIndexManager } from './services/code-index/manager';
@@ -19,6 +18,7 @@ import { CodeIndexController } from './services/code-index/controller';
 import { CodeIndexPanel } from './codeIndexPanel';
 import { RepoKnowledgeIndex } from './harness/repoKnowledgeIndex';
 import { CodeIndexSecretStore } from './services/code-index/config';
+import { AgentFixService, createAgentFixService } from './harness/agentFixService';
 
 class RuntimeProviderAdapter implements ModelProvider {
   readonly name: string;
@@ -44,6 +44,10 @@ class RuntimeProviderAdapter implements ModelProvider {
 
   async generateChangeBrief(prompt: string, token?: vscode.CancellationToken): Promise<string> {
     return this.adapter.generateChangeBrief(prompt, token);
+  }
+
+  async runAgentTask(prompt: string, token?: vscode.CancellationToken): Promise<string> {
+    return this.adapter.runAgentTask(prompt, token);
   }
 
   cancel(): void {
@@ -87,26 +91,28 @@ export function activate(context: vscode.ExtensionContext) {
     extraArgCount: settings.extraArgs ? settings.extraArgs.split(' ').filter(Boolean).length : 0,
   });
 
+  const createRuntimeProvider = () => {
+    const currentSettings = getSettings();
+    const currentRuntimeSettings: RuntimeSettings = {
+      runtime: currentSettings.runtime,
+      model: currentSettings.model,
+      autoReviewOnStage: currentSettings.autoReviewOnStage,
+      autoReviewOnCommit: currentSettings.autoReviewOnCommit,
+      executableOverride: currentSettings.executableOverride || undefined,
+      extraArgs: currentSettings.extraArgs ? currentSettings.extraArgs.split(' ').filter(Boolean) : undefined,
+    };
+    logDebug('Creating runtime provider adapter', {
+      runtime: currentSettings.runtime,
+      model: currentSettings.model,
+      workspaceRoot,
+      hasExecutableOverride: Boolean(currentSettings.executableOverride),
+    });
+    return new RuntimeProviderAdapter(currentSettings.runtime, currentRuntimeSettings, workspaceRoot);
+  };
+
   commentController = new ReviewCommentController(context, undefined, undefined, store);
   orchestrator = new ReviewOrchestrator(
-    () => {
-      const currentSettings = getSettings();
-      const currentRuntimeSettings: RuntimeSettings = {
-        runtime: currentSettings.runtime,
-        model: currentSettings.model,
-        autoReviewOnStage: currentSettings.autoReviewOnStage,
-        autoReviewOnCommit: currentSettings.autoReviewOnCommit,
-        executableOverride: currentSettings.executableOverride || undefined,
-        extraArgs: currentSettings.extraArgs ? currentSettings.extraArgs.split(' ').filter(Boolean) : undefined,
-      };
-      logDebug('Creating runtime provider adapter', {
-        runtime: currentSettings.runtime,
-        model: currentSettings.model,
-        workspaceRoot,
-        hasExecutableOverride: Boolean(currentSettings.executableOverride),
-      });
-      return new RuntimeProviderAdapter(currentSettings.runtime, currentRuntimeSettings, workspaceRoot);
-    },
+    createRuntimeProvider,
     commentController,
     store
   );
@@ -342,7 +348,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
-  const fixApplicator: FixApplicator = createFixApplicator();
+  const agentFixService: AgentFixService = createAgentFixService(createRuntimeProvider);
 
   const applyFindingFixCommand = vscode.commands.registerCommand(
     'codebunny.applyFindingFix',
@@ -384,13 +390,12 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
 
-      if (!finding || !finding.fix) {
-        logDebug('Command codebunny.applyFindingFix failed: finding or fix unavailable', {
+      if (!finding) {
+        logDebug('Command codebunny.applyFindingFix failed: finding unavailable', {
           findingId,
           hasFinding: Boolean(finding),
-          hasFix: Boolean(finding?.fix),
         });
-        vscode.window.showWarningMessage('Finding or fix not available');
+        vscode.window.showWarningMessage('Finding not available');
         return;
       }
 
@@ -403,16 +408,28 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       try {
-        logDebug('Command codebunny.applyFindingFix applying fix', {
+        logDebug('Command codebunny.applyFindingFix applying agent fix', {
           findingId,
           filePath,
           line: finding.line,
-          fixChars: finding.fix.length,
+          fixChars: finding.fix?.length ?? 0,
         });
-        const result = await fixApplicator.applyFix(resolveReviewFileUri(filePath).fsPath, finding.line, finding.fix);
+        const result = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: 'CodeBunny: Applying fix...',
+            cancellable: false,
+          },
+          async () =>
+            agentFixService.applyFindingFix(resolveReviewFileUri(filePath).fsPath, finding)
+        );
         if (result.success) {
           store.updateFindingStatus(findingId, 'apply');
-          vscode.window.showInformationMessage('Fix applied successfully');
+          if (result.warning) {
+            vscode.window.showInformationMessage(`Fix applied successfully. ${result.warning}`);
+          } else {
+            vscode.window.showInformationMessage('Fix applied successfully');
+          }
           logDebug('Command codebunny.applyFindingFix succeeded', {
             findingId,
             filePath,

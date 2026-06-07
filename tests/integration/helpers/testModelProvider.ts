@@ -15,6 +15,14 @@ export class TestModelProvider implements ModelProvider {
     };
   }
 
+  async generateChangeBrief(prompt: string): Promise<string> {
+    return this.adapter.generateChangeBrief(prompt);
+  }
+
+  async runAgentTask(prompt: string): Promise<string> {
+    return this.adapter.runAgentTask(prompt);
+  }
+
   cancel(): void {
     this.adapter.cancel();
   }
