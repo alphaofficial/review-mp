@@ -17,7 +17,7 @@ let outputChannel: vscode.OutputChannel | undefined;
 
 export function getSettings(): Settings {
   const config = typeof vscode.workspace?.getConfiguration === 'function'
-    ? vscode.workspace.getConfiguration('reviewmp')
+    ? vscode.workspace.getConfiguration('codebunny')
     : undefined;
   return {
     runtime: config?.get<RuntimeId>('runtime', DEFAULT_RUNTIME_ID) ?? DEFAULT_RUNTIME_ID,
@@ -40,18 +40,18 @@ function clampInteger(value: number, min: number, max: number): number {
 }
 
 export async function setRuntime(runtime: RuntimeId): Promise<void> {
-  const config = vscode.workspace.getConfiguration('reviewmp');
+  const config = vscode.workspace.getConfiguration('codebunny');
   await config.update('runtime', runtime, vscode.ConfigurationTarget.Global);
 }
 
 export async function setCodeIndexEnabled(enabled: boolean): Promise<void> {
-  const config = vscode.workspace.getConfiguration('reviewmp');
+  const config = vscode.workspace.getConfiguration('codebunny');
   await config.update('codeIndexEnabled', enabled, vscode.ConfigurationTarget.Workspace);
 }
 
 function getOutputChannel(): vscode.OutputChannel {
   if (!outputChannel) {
-    outputChannel = vscode.window.createOutputChannel('ReviewMP');
+    outputChannel = vscode.window.createOutputChannel('CodeBunny');
   }
   return outputChannel;
 }
@@ -71,7 +71,7 @@ export function logDebug(message: string, ...data: unknown[]): void {
 
   try {
     const timestamp = new Date().toISOString();
-    const line = [`[ReviewMP DEBUG ${timestamp}]`, message, ...data.map((value) => formatLogValue(value))].join(' ');
+    const line = [`[CodeBunny DEBUG ${timestamp}]`, message, ...data.map((value) => formatLogValue(value))].join(' ');
     console.log(line);
     getOutputChannel().appendLine(line);
   } catch {
@@ -97,7 +97,7 @@ export async function registerSettingsCommands(context: vscode.ExtensionContext)
   }
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('reviewmp.selectRuntime', async () => {
+    vscode.commands.registerCommand('codebunny.selectRuntime', async () => {
       const settings = getSettings();
       const items: { label: string; value: RuntimeId; description: string }[] = [
         { label: 'Claude', value: 'claude', description: 'Use Claude for reviews' },
@@ -121,7 +121,7 @@ export async function registerSettingsCommands(context: vscode.ExtensionContext)
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('reviewmp.showDebugLogs', () => {
+    vscode.commands.registerCommand('codebunny.showDebugLogs', () => {
       showDebugLogs();
     })
   );

@@ -9,7 +9,7 @@ export function setDebugEnabled(enabled: boolean): void {
 function safeDebugLog(message: string, ...data: unknown[]): void {
   if (debugEnabled) {
     const timestamp = new Date().toISOString();
-    console.log(`[ReviewMP DEBUG ${timestamp}]`, message, ...data);
+    console.log(`[CodeBunny DEBUG ${timestamp}]`, message, ...data);
   }
 }
 

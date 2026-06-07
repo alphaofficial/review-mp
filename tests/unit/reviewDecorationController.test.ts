@@ -125,11 +125,11 @@ describe('ReviewDecorationController', () => {
 
     it('should register commands', () => {
       expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-        'reviewmp.selectFinding',
+        'codebunny.selectFinding',
         expect.any(Function)
       );
       expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
-        'reviewmp.clearSelection',
+        'codebunny.clearSelection',
         expect.any(Function)
       );
     });
@@ -143,7 +143,7 @@ describe('ReviewDecorationController', () => {
       decorationController.selectFinding(finding!.id);
 
       expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
-        'reviewmp.openFinding',
+        'codebunny.openFinding',
         finding!.id
       );
     });

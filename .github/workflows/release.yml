@@ -83,13 +83,13 @@ jobs:
         run: npm test
 
       - name: Package VSIX
-        run: npx --yes @vscode/vsce package --out reviewmp.vsix
+        run: npx --yes @vscode/vsce package --out codebunny.vsix
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
         with:
-          name: reviewmp-vsix
-          path: reviewmp.vsix
+          name: codebunny-vsix
+          path: codebunny.vsix
           if-no-files-found: error
 
   release:
@@ -126,9 +126,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp artifacts/reviewmp.vsix reviewmp.vsix
+          cp artifacts/codebunny.vsix codebunny.vsix
           gh release create "${{ needs.tag.outputs.tag }}" \
             --title "${{ needs.tag.outputs.tag }}" \
             --notes-file release-notes.md \
             --latest \
-            reviewmp.vsix
+            codebunny.vsix

@@ -52,7 +52,7 @@ describe('CodeIndexTreeProvider', () => {
       pendingFiles: 0,
       enabled: true,
       workspaceRoot: '/repo',
-      storagePath: '/repo/.reviewmp/lancedb',
+      storagePath: '/repo/.codebunny/lancedb',
       lastIndexedAt: 1,
     };
 

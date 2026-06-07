@@ -46,8 +46,8 @@ export class GitWatcher implements vscode.Disposable {
   private setupConfigListener(): void {
     const configListener = vscode.workspace.onDidChangeConfiguration((e) => {
       if (
-        e.affectsConfiguration('reviewmp.autoReviewOnStage') ||
-        e.affectsConfiguration('reviewmp.autoReviewOnCommit')
+        e.affectsConfiguration('codebunny.autoReviewOnStage') ||
+        e.affectsConfiguration('codebunny.autoReviewOnCommit')
       ) {
         logDebug('Git watcher configuration changed; reinitializing');
         this.stopPolling();
@@ -58,7 +58,7 @@ export class GitWatcher implements vscode.Disposable {
   }
 
   private getConfig(): { autoReviewOnStage: boolean; autoReviewOnCommit: boolean } {
-    const config = vscode.workspace.getConfiguration('reviewmp');
+    const config = vscode.workspace.getConfiguration('codebunny');
     return {
       autoReviewOnStage: config.get<boolean>('autoReviewOnStage', false),
       autoReviewOnCommit: config.get<boolean>('autoReviewOnCommit', false),

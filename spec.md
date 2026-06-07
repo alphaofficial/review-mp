@@ -1,8 +1,8 @@
-# ReviewMP Provider-Agnostic Review Harness Spec
+# CodeBunny Provider-Agnostic Review Harness Spec
 
 ## 1. Summary
 
-ReviewMP should be a code review harness, not a provider product.
+CodeBunny should be a code review harness, not a provider product.
 
 Its job is to:
 
@@ -14,7 +14,7 @@ Its job is to:
 
 Its job is not to own model hosting, auth flows, or provider-specific review behavior.
 
-ReviewMP should support the same runtime surface used by `alphaofficial/ralph-loop`:
+CodeBunny should support the same runtime surface used by `alphaofficial/ralph-loop`:
 
 - `claude`
 - `copilot`
@@ -28,13 +28,13 @@ These are the supported review backends. The harness must stay agnostic to which
 
 ## 2. Core Product Decision
 
-ReviewMP will standardize on a single harness-owned review workflow and treat external AI runtimes as interchangeable execution adapters.
+CodeBunny will standardize on a single harness-owned review workflow and treat external AI runtimes as interchangeable execution adapters.
 
 That means:
 
-- prompts, tool rules, parsing, retries, diff handling, and comment validation live in ReviewMP
+- prompts, tool rules, parsing, retries, diff handling, and comment validation live in CodeBunny
 - auth, account selection, installed binaries, and provider-specific model routing stay with the external runtime
-- ReviewMP must not branch into different review behavior because the selected backend is `claude` vs `codex` vs `hermes`
+- CodeBunny must not branch into different review behavior because the selected backend is `claude` vs `codex` vs `hermes`
 
 The only backend-specific code allowed is adapter code required to invoke the runtime and normalize its output.
 
@@ -42,7 +42,7 @@ The only backend-specific code allowed is adapter code required to invoke the ru
 
 ### 3.1 Product Goals
 
-- make ReviewMP usable with the runtime backends developers already use
+- make CodeBunny usable with the runtime backends developers already use
 - remove product dependence on OpenCode-specific review behavior
 - keep review quality and safety consistent across all supported runtimes
 - make provider choice a configuration detail, not an architectural fork
@@ -57,10 +57,10 @@ The only backend-specific code allowed is adapter code required to invoke the ru
 ## 4. Non-Goals
 
 - implementing direct vendor SDK integrations in the first pass
-- managing API keys for every upstream provider inside ReviewMP
+- managing API keys for every upstream provider inside CodeBunny
 - supporting arbitrary custom CLIs as a first-class architecture primitive
 - allowing model-requested shell execution or file mutation during review
-- making ReviewMP a general-purpose coding agent
+- making CodeBunny a general-purpose coding agent
 
 ## 5. Supported Runtime Backends
 
@@ -76,7 +76,7 @@ Initial built-in support targets the same backends documented by `ralph-loop`.
 | `pi` | `pi` | Runtime may route to different providers internally |
 | `opencode` | `opencode` | Backward-compatibility path for current users |
 
-ReviewMP does not install these tools. It only discovers and invokes them.
+CodeBunny does not install these tools. It only discovers and invokes them.
 
 ## 6. Architecture
 
@@ -122,7 +122,7 @@ The selected runtime owns:
 
 The provider layer should be renamed conceptually from "provider" to "runtime adapter".
 
-ReviewMP should use one generic CLI adapter path wherever possible, configured by runtime manifests.
+CodeBunny should use one generic CLI adapter path wherever possible, configured by runtime manifests.
 
 ### 7.1 Manifest Shape
 
@@ -162,7 +162,7 @@ export interface RuntimeAdapter {
 
 ### 7.3 Design Rule
 
-ReviewMP must not create a custom harness code path per runtime unless a runtime cannot be represented by the shared adapter contract.
+CodeBunny must not create a custom harness code path per runtime unless a runtime cannot be represented by the shared adapter contract.
 
 Default expectation:
 
@@ -175,13 +175,13 @@ Default expectation:
 
 ### 8.1 Required Settings
 
-ReviewMP should move from provider-specific configuration to runtime-oriented configuration.
+CodeBunny should move from provider-specific configuration to runtime-oriented configuration.
 
 ```json
 {
-  "reviewmp.runtime": "codex",
-  "reviewmp.model": "gpt-5.4",
-  "reviewmp.debug": false
+  "codebunny.runtime": "codex",
+  "codebunny.model": "gpt-5.4",
+  "codebunny.debug": false
 }
 ```
 
@@ -189,28 +189,28 @@ ReviewMP should move from provider-specific configuration to runtime-oriented co
 
 Keep the settings surface small:
 
-- `reviewmp.runtime`
-- `reviewmp.model`
-- `reviewmp.debug`
-- `reviewmp.autoReviewOnStage`
-- `reviewmp.autoReviewOnCommit`
+- `codebunny.runtime`
+- `codebunny.model`
+- `codebunny.debug`
+- `codebunny.autoReviewOnStage`
+- `codebunny.autoReviewOnCommit`
 - optional runtime executable overrides
 - optional runtime extra args
 
 Avoid first-class settings like:
 
-- `reviewmp.openaiCompatibleEndpoint`
-- `reviewmp.customCliCommand`
+- `codebunny.openaiCompatibleEndpoint`
+- `codebunny.customCliCommand`
 - per-provider API key fields
 
-Those pull ReviewMP back toward provider-specific architecture.
+Those pull CodeBunny back toward provider-specific architecture.
 
 ### 8.3 Model Override Semantics
 
-`reviewmp.model` is best-effort pass-through.
+`codebunny.model` is best-effort pass-through.
 
-- if the selected runtime supports model override, ReviewMP passes it through
-- if it does not, ReviewMP warns clearly and proceeds with the runtime default
+- if the selected runtime supports model override, CodeBunny passes it through
+- if it does not, CodeBunny warns clearly and proceeds with the runtime default
 
 The harness must not encode provider-specific model catalogs.
 
@@ -221,13 +221,13 @@ Each runtime adapter must support a non-interactive review invocation that:
 1. receives a single harness-built review prompt
 2. returns structured findings directly or returns text that the harness can parse deterministically
 3. exits with a meaningful status code
-4. can be cancelled by ReviewMP
+4. can be cancelled by CodeBunny
 
-The harness prompt must define the response schema. ReviewMP should not rely on each runtime having native tool-calling or native structured-output features.
+The harness prompt must define the response schema. CodeBunny should not rely on each runtime having native tool-calling or native structured-output features.
 
 ## 10. Output Normalization
 
-Because the supported runtimes do not share one transport protocol, ReviewMP should normalize output into one internal result shape:
+Because the supported runtimes do not share one transport protocol, CodeBunny should normalize output into one internal result shape:
 
 ```ts
 export interface NormalizedReviewResult {
@@ -247,7 +247,7 @@ Allowed raw runtime formats:
 Normalization rules:
 
 - parser behavior must be runtime-agnostic after the adapter hands off output
-- line numbers must be converted into ReviewMP's internal format
+- line numbers must be converted into CodeBunny's internal format
 - invalid findings are dropped with debug logs
 - runtime-specific parsing hacks must stay isolated to the adapter or parser normalization layer
 
@@ -273,18 +273,18 @@ With:
 
 `opencode` remains supported as one runtime adapter, but it loses its privileged role in the architecture.
 
-ReviewMP should no longer be described as "OpenCode with extra steps." It should be described as a review harness that can run on top of any supported runtime.
+CodeBunny should no longer be described as "OpenCode with extra steps." It should be described as a review harness that can run on top of any supported runtime.
 
 ## 12. Acceptance Criteria
 
 The spec is satisfied when:
 
-1. ReviewMP can run the same review flow with any supported runtime backend.
+1. CodeBunny can run the same review flow with any supported runtime backend.
 2. The harness code does not branch on runtime name for review behavior.
 3. Adding a new runtime does not require editing orchestration or review-loop logic.
-4. Provider auth and installation remain outside ReviewMP.
+4. Provider auth and installation remain outside CodeBunny.
 5. Existing OpenCode users still have a supported path.
-6. The public docs describe ReviewMP as provider-agnostic and runtime-backed.
+6. The public docs describe CodeBunny as provider-agnostic and runtime-backed.
 
 ## 13. Explicit Out-of-Scope Backends
 

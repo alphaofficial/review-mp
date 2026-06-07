@@ -22,10 +22,10 @@ export class ReviewDecorationController implements vscode.Disposable {
     this.subscribeToEditorEvents();
 
     this.disposables.push(
-      vscode.commands.registerCommand('reviewmp.selectFinding', (findingId: string) => {
+      vscode.commands.registerCommand('codebunny.selectFinding', (findingId: string) => {
         this.selectFinding(findingId);
       }),
-      vscode.commands.registerCommand('reviewmp.clearSelection', () => {
+      vscode.commands.registerCommand('codebunny.clearSelection', () => {
         this.clearSelection();
       })
     );
@@ -121,7 +121,7 @@ export class ReviewDecorationController implements vscode.Disposable {
 
     this.applySelectionHighlight(finding);
 
-    vscode.commands.executeCommand('reviewmp.openFinding', findingId);
+    vscode.commands.executeCommand('codebunny.openFinding', findingId);
   }
 
   private applySelectionHighlight(finding: ReviewFinding): void {

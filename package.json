@@ -1,12 +1,12 @@
 {
-  "name": "reviewmp",
-  "displayName": "ReviewMP - AI Code Review",
+  "name": "codebunny",
+  "displayName": "CodeBunny - AI Code Review",
   "description": "Runtime-agnostic AI code review with inline comments",
   "version": "0.0.1",
-  "publisher": "reviewmp",
+  "publisher": "codebunny",
   "repository": {
     "type": "git",
-    "url": "https://github.com/alphaofficial/review-mp.git"
+    "url": "https://github.com/alphaofficial/codebunny.git"
   },
   "engines": {
     "vscode": "^1.85.0"
@@ -21,226 +21,226 @@
   "contributes": {
     "commands": [
       {
-        "command": "reviewmp.reviewFile",
-        "title": "ReviewMP: Review Current File"
+        "command": "codebunny.reviewFile",
+        "title": "CodeBunny: Review Current File"
       },
       {
-        "command": "reviewmp.reviewSelection",
-        "title": "ReviewMP: Review Selection"
+        "command": "codebunny.reviewSelection",
+        "title": "CodeBunny: Review Selection"
       },
       {
-        "command": "reviewmp.reviewStaged",
-        "title": "ReviewMP: Review Staged Changes"
+        "command": "codebunny.reviewStaged",
+        "title": "CodeBunny: Review Staged Changes"
       },
       {
-        "command": "reviewmp.reviewUncommitted",
-        "title": "ReviewMP: Review Uncommitted Changes"
+        "command": "codebunny.reviewUncommitted",
+        "title": "CodeBunny: Review Uncommitted Changes"
       },
       {
-        "command": "reviewmp.reviewLastCommit",
-        "title": "ReviewMP: Review Last Commit"
+        "command": "codebunny.reviewLastCommit",
+        "title": "CodeBunny: Review Last Commit"
       },
       {
-        "command": "reviewmp.reviewBranch",
-        "title": "ReviewMP: Review Branch Changes"
+        "command": "codebunny.reviewBranch",
+        "title": "CodeBunny: Review Branch Changes"
       },
       {
-        "command": "reviewmp.clearComments",
-        "title": "ReviewMP: Clear All Comments"
+        "command": "codebunny.clearComments",
+        "title": "CodeBunny: Clear All Comments"
       },
       {
-        "command": "reviewmp.acceptFix",
+        "command": "codebunny.acceptFix",
         "title": "Accept Fix",
         "icon": "$(check)"
       },
       {
-        "command": "reviewmp.rejectComment",
+        "command": "codebunny.rejectComment",
         "title": "Dismiss",
         "icon": "$(circle-slash)"
       },
       {
-        "command": "reviewmp.copyComment",
+        "command": "codebunny.copyComment",
         "title": "Copy Comment",
         "icon": "$(copy)"
       },
       {
-        "command": "reviewmp.collapseComment",
+        "command": "codebunny.collapseComment",
         "title": "Collapse",
         "icon": "$(chevron-up)"
       },
       {
-        "command": "reviewmp.selectRuntime",
-        "title": "ReviewMP: Select Runtime"
+        "command": "codebunny.selectRuntime",
+        "title": "CodeBunny: Select Runtime"
       },
       {
-        "command": "reviewmp.showDebugLogs",
-        "title": "ReviewMP: Show Debug Logs"
+        "command": "codebunny.showDebugLogs",
+        "title": "CodeBunny: Show Debug Logs"
       },
       {
-        "command": "reviewmp.reviewAllChanges",
-        "title": "ReviewMP: Review All Changes"
+        "command": "codebunny.reviewAllChanges",
+        "title": "CodeBunny: Review All Changes"
       },
       {
-        "command": "reviewmp.openFinding",
-        "title": "ReviewMP: Open Finding"
+        "command": "codebunny.openFinding",
+        "title": "CodeBunny: Open Finding"
       },
       {
-        "command": "reviewmp.applyFindingFix",
-        "title": "ReviewMP: Apply Fix"
+        "command": "codebunny.applyFindingFix",
+        "title": "CodeBunny: Apply Fix"
       },
       {
-        "command": "reviewmp.dismissFinding",
-        "title": "ReviewMP: Dismiss Finding"
+        "command": "codebunny.dismissFinding",
+        "title": "CodeBunny: Dismiss Finding"
       },
       {
-        "command": "reviewmp.clearActiveReview",
-        "title": "ReviewMP: Clear Active Review"
+        "command": "codebunny.clearActiveReview",
+        "title": "CodeBunny: Clear Active Review"
       },
       {
-        "command": "reviewmp.openReviewPanel",
-        "title": "ReviewMP: Open Review Panel"
+        "command": "codebunny.openReviewPanel",
+        "title": "CodeBunny: Open Review Panel"
       },
       {
-        "command": "reviewmp.enableCodeIndex",
-        "title": "ReviewMP: Enable Code Indexing"
+        "command": "codebunny.enableCodeIndex",
+        "title": "CodeBunny: Enable Code Indexing"
       },
       {
-        "command": "reviewmp.disableCodeIndex",
-        "title": "ReviewMP: Disable Code Indexing"
+        "command": "codebunny.disableCodeIndex",
+        "title": "CodeBunny: Disable Code Indexing"
       },
       {
-        "command": "reviewmp.rebuildCodeIndex",
-        "title": "ReviewMP: Rebuild Code Index"
+        "command": "codebunny.rebuildCodeIndex",
+        "title": "CodeBunny: Rebuild Code Index"
       },
       {
-        "command": "reviewmp.stopCodeIndex",
-        "title": "ReviewMP: Stop Code Indexing"
+        "command": "codebunny.stopCodeIndex",
+        "title": "CodeBunny: Stop Code Indexing"
       },
       {
-        "command": "reviewmp.clearCodeIndex",
-        "title": "ReviewMP: Clear Code Index Data"
+        "command": "codebunny.clearCodeIndex",
+        "title": "CodeBunny: Clear Code Index Data"
       }
     ],
     "menus": {
       "comments/comment/title": [
         {
-          "command": "reviewmp.acceptFix",
+          "command": "codebunny.acceptFix",
           "group": "inline@1",
-          "when": "commentController == reviewmp && comment == reviewmp-with-fix"
+          "when": "commentController == codebunny && comment == codebunny-with-fix"
         },
         {
-          "command": "reviewmp.rejectComment",
+          "command": "codebunny.rejectComment",
           "group": "inline@2",
-          "when": "commentController == reviewmp && (comment == reviewmp || comment == reviewmp-with-fix)"
+          "when": "commentController == codebunny && (comment == codebunny || comment == codebunny-with-fix)"
         },
         {
-          "command": "reviewmp.copyComment",
+          "command": "codebunny.copyComment",
           "group": "inline@3",
-          "when": "commentController == reviewmp && (comment == reviewmp || comment == reviewmp-with-fix)"
+          "when": "commentController == codebunny && (comment == codebunny || comment == codebunny-with-fix)"
         },
         {
-          "command": "reviewmp.collapseComment",
+          "command": "codebunny.collapseComment",
           "group": "inline@4",
-          "when": "commentController == reviewmp && (comment == reviewmp || comment == reviewmp-with-fix)"
+          "when": "commentController == codebunny && (comment == codebunny || comment == codebunny-with-fix)"
         }
       ],
       "editor/context": [
         {
-          "command": "reviewmp.reviewFile",
-          "group": "reviewmp@1",
-          "title": "ReviewMP: Review Current File"
+          "command": "codebunny.reviewFile",
+          "group": "codebunny@1",
+          "title": "CodeBunny: Review Current File"
         },
         {
-          "command": "reviewmp.reviewSelection",
-          "group": "reviewmp@2",
+          "command": "codebunny.reviewSelection",
+          "group": "codebunny@2",
           "when": "editorHasSelection"
         }
       ],
       "explorer/context": [
         {
-          "command": "reviewmp.reviewFile",
-          "group": "reviewmp@1",
+          "command": "codebunny.reviewFile",
+          "group": "codebunny@1",
           "when": "!explorerResourceIsFolder"
         }
       ],
       "view/title": [
         {
-          "command": "reviewmp.clearActiveReview",
-          "when": "view == reviewmp.reviews",
+          "command": "codebunny.clearActiveReview",
+          "when": "view == codebunny.reviews",
           "group": "navigation"
         }
       ],
       "view/item/context": [
         {
-          "command": "reviewmp.openFinding",
-          "when": "view == reviewmp.reviews && viewItem == finding",
+          "command": "codebunny.openFinding",
+          "when": "view == codebunny.reviews && viewItem == finding",
           "group": "navigation@1"
         },
         {
-          "command": "reviewmp.applyFindingFix",
-          "when": "view == reviewmp.reviews && viewItem == findingWithFix",
+          "command": "codebunny.applyFindingFix",
+          "when": "view == codebunny.reviews && viewItem == findingWithFix",
           "group": "action@1"
         },
         {
-          "command": "reviewmp.dismissFinding",
-          "when": "view == reviewmp.reviews && viewItem == finding",
+          "command": "codebunny.dismissFinding",
+          "when": "view == codebunny.reviews && viewItem == finding",
           "group": "action@2"
         },
         {
-          "command": "reviewmp.openReviewPanel",
-          "when": "view == reviewmp.reviews && viewItem == previousReview",
+          "command": "codebunny.openReviewPanel",
+          "when": "view == codebunny.reviews && viewItem == previousReview",
           "group": "navigation@1"
         }
       ],
-      "view/container/reviewmp": [
+      "view/container/codebunny": [
         {
-          "command": "reviewmp.clearActiveReview",
-          "when": "view == reviewmp.reviews"
+          "command": "codebunny.clearActiveReview",
+          "when": "view == codebunny.reviews"
         }
       ]
     },
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "reviewmp",
-          "title": "ReviewMP",
-          "icon": "resources/reviewmp.svg"
+          "id": "codebunny",
+          "title": "CodeBunny",
+          "icon": "resources/codebunny.svg"
         }
       ]
     },
     "views": {
-      "reviewmp": [
+      "codebunny": [
         {
-          "id": "reviewmp.newReview",
+          "id": "codebunny.newReview",
           "name": "NEW REVIEW",
           "icon": "$(git-compare)"
         },
         {
-          "id": "reviewmp.filesToReview",
+          "id": "codebunny.filesToReview",
           "name": "FILES",
           "icon": "$(files)"
         },
         {
-          "id": "reviewmp.reviews",
+          "id": "codebunny.reviews",
           "name": "REVIEWS",
           "icon": "$(comment-discussion)"
         },
         {
-          "id": "reviewmp.previousReviews",
+          "id": "codebunny.previousReviews",
           "name": "PREVIOUS REVIEWS",
           "icon": "$(history)"
         },
         {
-          "id": "reviewmp.indexing",
+          "id": "codebunny.indexing",
           "name": "INDEXING",
           "icon": "$(database)"
         }
       ]
     },
     "configuration": {
-      "title": "ReviewMP",
+      "title": "CodeBunny",
       "properties": {
-        "reviewmp.runtime": {
+        "codebunny.runtime": {
           "type": "string",
           "default": "opencode",
           "enum": [
@@ -254,39 +254,39 @@
           ],
           "description": "Runtime to use for code reviews"
         },
-        "reviewmp.model": {
+        "codebunny.model": {
           "type": "string",
           "default": "",
           "description": "Model to use for reviews. Leave empty for runtime default. Format varies by runtime."
         },
-        "reviewmp.autoReviewOnStage": {
+        "codebunny.autoReviewOnStage": {
           "type": "boolean",
           "default": false,
           "description": "Automatically run review when files are staged (git add)"
         },
-        "reviewmp.autoReviewOnCommit": {
+        "codebunny.autoReviewOnCommit": {
           "type": "boolean",
           "default": false,
           "description": "Automatically run a review when a commit is created"
         },
-        "reviewmp.codeIndexEnabled": {
+        "codebunny.codeIndexEnabled": {
           "type": "boolean",
           "default": true,
           "description": "Enable background repository indexing for review memory and related-code retrieval"
         },
-        "reviewmp.reviewConcurrency": {
+        "codebunny.reviewConcurrency": {
           "type": "number",
           "default": 5,
           "minimum": 1,
           "maximum": 20,
           "description": "Maximum number of file review scopes to run in parallel"
         },
-        "reviewmp.executableOverride": {
+        "codebunny.executableOverride": {
           "type": "string",
           "default": "",
           "description": "Override the default executable path for the selected runtime"
         },
-        "reviewmp.extraArgs": {
+        "codebunny.extraArgs": {
           "type": "string",
           "default": "",
           "description": "Additional arguments to pass to the runtime executable"

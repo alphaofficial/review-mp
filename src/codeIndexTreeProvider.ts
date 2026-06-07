@@ -81,7 +81,7 @@ export class CodeIndexTreeProvider implements vscode.TreeDataProvider<CodeIndexT
     return {
       id: 'code-index-storage',
       label: 'Index Storage',
-      description: state.storagePath ? '.reviewmp/lancedb' : 'Unavailable',
+      description: state.storagePath ? '.codebunny/lancedb' : 'Unavailable',
       tooltip: state.storagePath,
       icon: 'database',
     };
@@ -97,7 +97,7 @@ export class CodeIndexTreeProvider implements vscode.TreeDataProvider<CodeIndexT
           label: 'Rebuild Index',
           icon: 'refresh',
           command: {
-            command: 'reviewmp.rebuildCodeIndex',
+            command: 'codebunny.rebuildCodeIndex',
             title: 'Rebuild Index',
           },
         },
@@ -106,7 +106,7 @@ export class CodeIndexTreeProvider implements vscode.TreeDataProvider<CodeIndexT
           label: 'Stop Indexing',
           icon: 'debug-stop',
           command: {
-            command: 'reviewmp.stopCodeIndex',
+            command: 'codebunny.stopCodeIndex',
             title: 'Stop Indexing',
           },
         },
@@ -115,7 +115,7 @@ export class CodeIndexTreeProvider implements vscode.TreeDataProvider<CodeIndexT
           label: 'Disable Indexing',
           icon: 'circle-slash',
           command: {
-            command: 'reviewmp.disableCodeIndex',
+            command: 'codebunny.disableCodeIndex',
             title: 'Disable Indexing',
           },
         },
@@ -124,7 +124,7 @@ export class CodeIndexTreeProvider implements vscode.TreeDataProvider<CodeIndexT
           label: 'Clear Index Data',
           icon: 'trash',
           command: {
-            command: 'reviewmp.clearCodeIndex',
+            command: 'codebunny.clearCodeIndex',
             title: 'Clear Index Data',
           },
         }
@@ -135,7 +135,7 @@ export class CodeIndexTreeProvider implements vscode.TreeDataProvider<CodeIndexT
         label: 'Enable Indexing',
         icon: 'play',
         command: {
-          command: 'reviewmp.enableCodeIndex',
+          command: 'codebunny.enableCodeIndex',
           title: 'Enable Indexing',
         },
       });

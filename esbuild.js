@@ -37,7 +37,7 @@ async function main() {
     target: 'node20',
     outfile: 'out/extension.js',
     define: {
-      __REVIEWMP_PROD__: JSON.stringify(production),
+      __CODEBUNNY_PROD__: JSON.stringify(production),
     },
     external,
     sourcemap: production ? false : true,

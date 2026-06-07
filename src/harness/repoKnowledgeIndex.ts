@@ -19,11 +19,11 @@ function logDebug(message: string, data?: unknown): void {
   try {
     const timestamp = new Date().toISOString();
     if (data === undefined) {
-      console.log(`[ReviewMP DEBUG ${timestamp}] ${message}`);
+      console.log(`[CodeBunny DEBUG ${timestamp}] ${message}`);
       return;
     }
 
-    console.log(`[ReviewMP DEBUG ${timestamp}] ${message}`, data);
+    console.log(`[CodeBunny DEBUG ${timestamp}] ${message}`, data);
   } catch {
     // Logging must never interrupt indexing or review flows.
   }
@@ -184,7 +184,7 @@ interface IndexingControl {
   waitIfPaused?: () => Promise<void>;
 }
 
-const INDEX_DIRECTORY = path.join('.reviewmp', 'lancedb');
+const INDEX_DIRECTORY = path.join('.codebunny', 'lancedb');
 const CODE_CHUNKS_TABLE = 'code_chunks';
 const CODE_DECLARATIONS_TABLE = 'code_declarations';
 const CODE_RELATIONSHIPS_TABLE = 'code_relationships';
@@ -212,7 +212,7 @@ const REBUILD_BATCH_SIZE = 128;
 const YIELD_INTERVAL = 64;
 const IGNORED_DIRECTORIES = new Set([
   '.git',
-  '.reviewmp',
+  '.codebunny',
   'node_modules',
   'out',
   'dist',
