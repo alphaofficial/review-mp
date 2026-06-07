@@ -30,10 +30,12 @@ export class ReviewCommentController implements vscode.Disposable {
   private findingIdToComment: Map<string, vscode.Comment> = new Map();
   private fixApplicator: FixApplicator;
   private store: ReviewSessionStore | null = null;
+  private readonly authorIconPath: vscode.Uri;
 
   constructor(context: vscode.ExtensionContext, provider?: ModelProvider, fixApplicator?: FixApplicator, store?: ReviewSessionStore) {
     this.fixApplicator = fixApplicator || createFixApplicator();
     this.store = store || null;
+    this.authorIconPath = vscode.Uri.joinPath(context.extensionUri, 'resources', 'codebunny.png');
     this.controller = vscode.comments.createCommentController(
       'codebunny',
       'CodeBunny Comments'
@@ -113,7 +115,10 @@ export class ReviewCommentController implements vscode.Disposable {
       const reviewComment: vscode.Comment = {
         body,
         mode: vscode.CommentMode.Preview,
-        author: { name: 'CodeBunny' },
+        author: {
+          name: 'CodeBunny',
+          iconPath: this.authorIconPath,
+        },
         contextValue: finding.fix ? 'codebunny-with-fix' : 'codebunny',
       };
 
