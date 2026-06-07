@@ -137,7 +137,7 @@ export class ReviewCommentController implements vscode.Disposable {
 
       thread.comments = [reviewComment];
       thread.canReply = false;
-      thread.label = this.getSeverityLabel(finding.severity);
+      thread.label = `${this.getSeverityIndicator(finding.severity)} ${this.getSeverityLabel(finding.severity)}`;
       thread.collapsibleState = vscode.CommentThreadCollapsibleState.Collapsed;
 
       threads.push(thread);
@@ -201,6 +201,34 @@ export class ReviewCommentController implements vscode.Disposable {
     return md;
   }
 
+  private getSeverityIndicator(severity: ReviewFinding['severity']): string {
+    switch (severity) {
+      case 'error':
+        return '🔴';
+      case 'warning':
+        return '🟡';
+      case 'suggestion':
+        return '🟢';
+      case 'info':
+      default:
+        return '🔵';
+    }
+  }
+
+  private getSeverityLabel(severity: ReviewFinding['severity']): string {
+    switch (severity) {
+      case 'error':
+        return 'Potential Issue';
+      case 'warning':
+        return 'Warning';
+      case 'suggestion':
+        return 'Suggestion';
+      case 'info':
+      default:
+        return 'Info';
+    }
+  }
+
   private getCommentText(finding: ReviewFinding): { title: string; body: string } {
     if (finding.title?.trim()) {
       return {
@@ -259,21 +287,6 @@ export class ReviewCommentController implements vscode.Disposable {
       .some(line => line.startsWith('+') || line.startsWith('-'));
 
     return hasDiffMarkers ? 'diff' : languageId || '';
-  }
-
-  private getSeverityLabel(severity?: string): string {
-    switch (severity) {
-      case 'error':
-        return 'Potential Issue';
-      case 'warning':
-        return 'Warning';
-      case 'info':
-        return 'Info';
-      case 'suggestion':
-        return 'Refactor Suggestion';
-      default:
-        return 'Review';
-    }
   }
 
   private async acceptFix(comment: vscode.Comment) {

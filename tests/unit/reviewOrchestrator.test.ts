@@ -136,13 +136,13 @@ describe('ReviewOrchestrator', () => {
     store = createReviewSessionStore();
 
     mockController = {
-      createCommentThread: vi.fn().mockReturnValue({
+      createCommentThread: vi.fn().mockImplementation(() => ({
         comments: [],
         canReply: false,
         label: '',
         collapsibleState: 2,
         dispose: vi.fn(),
-      }),
+      })),
       dispose: vi.fn(),
       commentingRangeProvider: undefined,
     };
@@ -868,6 +868,7 @@ describe('ReviewCommentController', () => {
   let mockContext: any;
   let controller: ReviewCommentController;
   let mockController: any;
+  let createdThreads: any[];
   let findingCounter = 0;
 
   const createFinding = (
@@ -890,14 +891,19 @@ describe('ReviewCommentController', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     findingCounter = 0;
+    createdThreads = [];
 
     mockController = {
-      createCommentThread: vi.fn().mockReturnValue({
-        comments: [],
-        canReply: false,
-        label: '',
-        collapsibleState: 2,
-        dispose: vi.fn(),
+      createCommentThread: vi.fn().mockImplementation(() => {
+        const thread = {
+          comments: [],
+          canReply: false,
+          label: '',
+          collapsibleState: 2,
+          dispose: vi.fn(),
+        };
+        createdThreads.push(thread);
+        return thread;
       }),
       dispose: vi.fn(),
       commentingRangeProvider: undefined,
@@ -932,7 +938,7 @@ describe('ReviewCommentController', () => {
       expect(mockController.createCommentThread).toHaveBeenCalledTimes(firstCallThreadCount + 1);
     });
 
-    it('should create comment threads with correct severity labels', () => {
+    it('creates comment threads with colored severity indicators in the header', () => {
       const mockUri = { fsPath: '/test/file.ts', toString: () => '/test/file.ts' } as any;
 
       const findings = [
@@ -945,6 +951,22 @@ describe('ReviewCommentController', () => {
       controller.addComments(mockUri, findings);
 
       expect(mockController.createCommentThread).toHaveBeenCalledTimes(4);
+      expect(createdThreads[0].label).toBe('🔴 Potential Issue');
+      expect(createdThreads[1].label).toBe('🟡 Warning');
+      expect(createdThreads[2].label).toBe('🔵 Info');
+      expect(createdThreads[3].label).toBe('🟢 Suggestion');
+    });
+
+    it('keeps the inline comment body plain markdown', () => {
+      const mockUri = { fsPath: '/test/file.ts', toString: () => '/test/file.ts' } as any;
+      const finding = createFinding('/test/file.ts', 1, 'Warning comment', 'warning');
+
+      controller.addComments(mockUri, [finding]);
+
+      const thread = createdThreads[0];
+      const comment = thread.comments[0];
+      expect(comment.body.supportHtml).toBe(false);
+      expect(comment.body.appendMarkdown).toHaveBeenCalledWith(expect.stringMatching(/^\*\*/));
     });
 
     it('should handle comments with and without fixes', () => {
