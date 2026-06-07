@@ -150,6 +150,7 @@ describe('ReviewOrchestrator', () => {
     (vscode.comments.createCommentController as any).mockReturnValue(mockController);
 
     mockContext = {
+      extensionUri: vscode.Uri.file('/test/extension'),
       subscriptions: [] as any[],
       workspaceState: {
         get: vi.fn(),
@@ -905,6 +906,7 @@ describe('ReviewCommentController', () => {
     (vscode.comments.createCommentController as any).mockReturnValue(mockController);
 
     mockContext = {
+      extensionUri: vscode.Uri.file('/test/extension'),
       subscriptions: [] as any[],
       workspaceState: {
         get: vi.fn(),

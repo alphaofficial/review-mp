@@ -102,7 +102,7 @@ describe('extension activation', () => {
   it('does not activate the workspace orchestrator when indexing is disabled', async () => {
     const { activate } = await import('../../src/extension');
 
-    activate({ subscriptions: [] } as any);
+    activate({ extensionUri: { fsPath: '/test/extension' }, subscriptions: [] } as any);
 
     expect(mocks.getInstance).toHaveBeenCalledTimes(1);
     expect(mocks.activateWorkspace).not.toHaveBeenCalled();
