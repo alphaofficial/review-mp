@@ -233,6 +233,7 @@
         {
           "id": "codebunny.indexing",
           "name": "INDEXING",
+          "type": "webview",
           "icon": "$(database)"
         }
       ]
@@ -269,10 +270,48 @@
           "default": false,
           "description": "Automatically run a review when a commit is created"
         },
-        "codebunny.codeIndexEnabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable background repository indexing for review memory and related-code retrieval"
+        "codebunny.codeIndexEmbedderProvider": {
+          "type": "string",
+          "default": "ollama",
+          "enum": [
+            "ollama"
+          ],
+          "description": "Embedder provider for code indexing"
+        },
+        "codebunny.codeIndexOllamaBaseUrl": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "Base URL for the Ollama server used for code index embeddings"
+        },
+        "codebunny.codeIndexOllamaModel": {
+          "type": "string",
+          "default": "nomic-embed-text",
+          "description": "Ollama embedding model for code indexing"
+        },
+        "codebunny.codeIndexModelDimension": {
+          "type": "number",
+          "default": 768,
+          "minimum": 1,
+          "description": "Embedding vector dimension expected from the configured code index model"
+        },
+        "codebunny.codeIndexQdrantUrl": {
+          "type": "string",
+          "default": "http://localhost:6333",
+          "description": "Qdrant URL for code index vector storage"
+        },
+        "codebunny.codeIndexSearchMinScore": {
+          "type": "number",
+          "default": 0.4,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Minimum semantic search score used for code index retrieval"
+        },
+        "codebunny.codeIndexSearchMaxResults": {
+          "type": "number",
+          "default": 50,
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Maximum semantic search results returned from the code index"
         },
         "codebunny.reviewConcurrency": {
           "type": "number",
@@ -314,8 +353,6 @@
     "vitest": "^4.1.7"
   },
   "dependencies": {
-    "@lancedb/lancedb": "^0.30.0",
-    "apache-arrow": "^18.1.0",
     "tree-sitter": "^0.21.1",
     "tree-sitter-c": "0.23.1",
     "tree-sitter-c-sharp": "0.23.1",

@@ -1,15 +1,14 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Connection, Table } from '@lancedb/lancedb';
 import { isDebugLoggingEnabled } from '../buildFlags';
+import { CodeIndexResolvedSettings, getDefaultCodeIndexSettings } from '../services/code-index/config-shared';
+import { parseCodeIndexBlocks } from './codeIndexParser';
+import { buildQdrantFileFilter, buildQdrantMatchFilter, QdrantClient } from './qdrantClient';
 import { CodeRelationship, extractCodeStructure, getLanguageIdFromFilePath, getSupportedCodeExtensions } from './codeStructure';
-import { EMBEDDING_ALGORITHM_VERSION, embedText } from './textEmbedding';
-
-const requireFromHere = createRequire(__filename);
-let lancedbModule: typeof import('@lancedb/lancedb') | undefined;
+import { buildEmbeddingVersion, embedText } from './textEmbedding';
+import { LocalIndexStore as JsonStore } from './localIndexStore';
 
 function logDebug(message: string, data?: unknown): void {
   if (!isDebugLoggingEnabled()) {
@@ -184,17 +183,22 @@ interface IndexingControl {
   waitIfPaused?: () => Promise<void>;
 }
 
-const INDEX_DIRECTORY = path.join('.codebunny', 'lancedb');
-const CODE_CHUNKS_TABLE = 'code_chunks';
-const CODE_DECLARATIONS_TABLE = 'code_declarations';
-const CODE_RELATIONSHIPS_TABLE = 'code_relationships';
-const REVIEW_COMMENTS_TABLE = 'review_comments';
-const EXACT_REVIEW_RUNS_TABLE = 'review_runs';
-const EXACT_REVIEW_UNITS_TABLE = 'review_units';
-const EXACT_REVIEW_FINDINGS_TABLE = 'review_run_findings';
-const FILE_SUMMARIES_TABLE = 'file_summaries';
-const REPO_SUMMARIES_TABLE = 'repo_summaries';
-const INDEX_METADATA_TABLE = 'index_metadata';
+interface LocalIndexState {
+  declarations: CodeDeclarationRecord[];
+  exactReviewFindings: ExactReviewFindingRecord[];
+  exactReviewRuns: ExactReviewRunRecord[];
+  exactReviewUnits: ExactReviewUnitRecord[];
+  fileSummaries: FileSummaryRecord[];
+  metadata?: IndexMetadataRecord;
+  reviewMemories: Array<{ id: string; updatedAt: string }>;
+  relationships: CodeRelationshipRecord[];
+  repoSummary?: RepoSummaryRecord;
+}
+
+type CodeChunkPayload = Omit<CodeChunkRecord, 'vector'> & { recordType: 'code_chunk' };
+type ReviewMemoryPayload = Omit<ReviewMemoryRecord, 'vector'> & { recordType: 'review_memory' };
+
+const INDEX_DIRECTORY = path.join('.codebunny', 'index');
 const SUPPORTED_EXTENSIONS = new Set([
   ...getSupportedCodeExtensions(),
   '.ts',
@@ -203,13 +207,14 @@ const SUPPORTED_EXTENSIONS = new Set([
   '.jsx',
   '.json',
 ]);
-const INDEX_SCHEMA_VERSION = 2;
+const INDEX_SCHEMA_VERSION = 3;
 const REVIEW_COMMENT_RETENTION = 100;
 const EXACT_REVIEW_RUN_RETENTION = 200;
 const EXACT_REVIEW_UNIT_RETENTION = 1_000;
 const EXACT_REVIEW_FINDING_RETENTION = 5_000;
 const REBUILD_BATCH_SIZE = 128;
 const YIELD_INTERVAL = 64;
+const MAX_EMBEDDING_CHUNK_CHARS = 1_000;
 const IGNORED_DIRECTORIES = new Set([
   '.git',
   '.codebunny',
@@ -221,25 +226,41 @@ const IGNORED_DIRECTORIES = new Set([
 
 const instanceCache = new Map<string, Promise<RepoKnowledgeIndex>>();
 let configuredStorageRoot: string | undefined;
-
-function getLanceDb(): typeof import('@lancedb/lancedb') {
-  lancedbModule ??= requireFromHere('@lancedb/lancedb') as typeof import('@lancedb/lancedb');
-  return lancedbModule;
-}
+let configuredConnectionSettings: CodeIndexResolvedSettings | undefined;
 
 export class RepoKnowledgeIndex {
-  private connectionPromise: Promise<Connection>;
-  private repositoryId: string;
+  private readonly repositoryId: string;
+  private readonly cacheStore: JsonStore<LocalIndexState>;
+  private readonly dbPath: string;
+  private readonly embeddingVersion: string;
+  private readonly qdrantClient: QdrantClient;
+  private collectionReady = false;
   private hasIndexedWorkspace = false;
   private rebuildPromise: Promise<number> | undefined;
-  private readonly dbPath: string;
-  private readonly vectorIndexedTables = new Set<string>();
 
-  private constructor(private readonly workspaceRoot: string) {
+  private constructor(
+    private readonly workspaceRoot: string,
+    private readonly connectionSettings: CodeIndexResolvedSettings
+  ) {
     this.repositoryId = buildRepositoryId(workspaceRoot);
     this.dbPath = resolveStoragePathForWorkspace(workspaceRoot);
     fs.mkdirSync(this.dbPath, { recursive: true });
-    this.connectionPromise = getLanceDb().connect(this.dbPath);
+    this.cacheStore = new JsonStore<LocalIndexState>(this.dbPath, 'index-state.json', {
+      declarations: [],
+      exactReviewFindings: [],
+      exactReviewRuns: [],
+      exactReviewUnits: [],
+      fileSummaries: [],
+      relationships: [],
+      reviewMemories: [],
+    });
+    this.embeddingVersion = buildEmbeddingVersion(connectionSettings);
+    this.qdrantClient = new QdrantClient({
+      apiKey: connectionSettings.qdrantApiKey,
+      baseUrl: connectionSettings.qdrantUrl,
+      collectionName: buildCollectionName(this.repositoryId),
+      dimension: connectionSettings.modelDimension,
+    });
   }
 
   static setDefaultStorageRoot(storageRoot: string | undefined): void {
@@ -250,35 +271,28 @@ export class RepoKnowledgeIndex {
     return configuredStorageRoot;
   }
 
+  static setDefaultConnectionSettings(settings: CodeIndexResolvedSettings | undefined): void {
+    configuredConnectionSettings = settings;
+  }
+
   static getStoragePathForWorkspace(workspaceRoot: string): string {
     return resolveStoragePathForWorkspace(workspaceRoot);
   }
 
   static forWorkspace(workspaceRoot: string): Promise<RepoKnowledgeIndex> {
-    const cached = instanceCache.get(workspaceRoot);
+    const cacheKey = buildInstanceCacheKey(workspaceRoot);
+    const cached = instanceCache.get(cacheKey);
     if (cached) {
-      logDebug('Repo knowledge index cache hit', {
-        workspaceRoot,
-      });
       return cached;
     }
 
-    logDebug('Repo knowledge index creating workspace instance', {
-      workspaceRoot,
-      indexDirectory: path.join(workspaceRoot, INDEX_DIRECTORY),
-    });
-    const created = Promise.resolve(new RepoKnowledgeIndex(workspaceRoot));
-    instanceCache.set(workspaceRoot, created);
+    const created = Promise.resolve(new RepoKnowledgeIndex(workspaceRoot, resolveConnectionSettings()));
+    instanceCache.set(cacheKey, created);
     return created;
   }
 
   async ensureIndexed(candidateFilePaths?: string[]): Promise<void> {
-    await this.runWithRecovery('ensureIndexed', async () => {
-      logDebug('Repo knowledge index ensureIndexed requested', {
-        workspaceRoot: this.workspaceRoot,
-        hasIndexedWorkspace: this.hasIndexedWorkspace,
-        candidateFileCount: candidateFilePaths?.length ?? 0,
-      });
+    await this.runWithRecovery(async () => {
       if (!this.hasIndexedWorkspace) {
         await this.rebuildWorkspace();
         return;
@@ -297,29 +311,21 @@ export class RepoKnowledgeIndex {
       return this.rebuildPromise;
     }
 
-    this.rebuildPromise = this.runWithRecovery('rebuildWorkspace', async () => {
+    this.rebuildPromise = this.runWithRecovery(async () => {
       const filesToIndex = await this.scanWorkspaceFiles(control);
-      logDebug('Repo knowledge index workspace rebuild started', {
-        workspaceRoot: this.workspaceRoot,
-        fileCount: filesToIndex.length,
-      });
       await this.writeMetadata('rebuilding');
       try {
-        await this.clearIndexedContentTables();
+        await this.resetIndexedContent();
         const metadata = this.getGitMetadata();
         for (let start = 0; start < filesToIndex.length; start += REBUILD_BATCH_SIZE) {
           await control?.waitIfPaused?.();
           const batch = filesToIndex.slice(start, start + REBUILD_BATCH_SIZE);
-          await this.upsertFiles(batch, { updateRepoSummary: false, metadata }, control);
+          await this.upsertFiles(batch, { metadata, updateRepoSummary: false }, control);
           await yieldToEventLoop();
         }
-        await this.writeRepoSummary(await this.readTable<FileSummaryRecord>(FILE_SUMMARIES_TABLE), metadata);
+        await this.writeRepoSummary(metadata);
         this.hasIndexedWorkspace = true;
         await this.writeMetadata('ready');
-        logDebug('Repo knowledge index workspace rebuild completed', {
-          workspaceRoot: this.workspaceRoot,
-          fileCount: filesToIndex.length,
-        });
         return filesToIndex.length;
       } catch (error) {
         await this.writeMetadata('error', error instanceof Error ? error.message : String(error));
@@ -333,58 +339,38 @@ export class RepoKnowledgeIndex {
   }
 
   async indexFiles(candidateFilePaths: string[], control?: IndexingControl): Promise<void> {
-    await this.runWithRecovery('indexFiles', async () => {
+    await this.runWithRecovery(async () => {
       const absolutePaths = this.resolveCandidatePaths(candidateFilePaths);
       if (absolutePaths.length === 0) {
-        logDebug('Repo knowledge index incremental index skipped because no candidates resolved', {
-          workspaceRoot: this.workspaceRoot,
-          candidateFileCount: candidateFilePaths.length,
-        });
         return;
       }
 
-      logDebug('Repo knowledge index incremental index started', {
-        workspaceRoot: this.workspaceRoot,
-        candidateFileCount: candidateFilePaths.length,
-        resolvedFileCount: absolutePaths.length,
-      });
       await this.upsertFiles(absolutePaths, { updateRepoSummary: true }, control);
       this.hasIndexedWorkspace = true;
       await this.writeMetadata('ready');
-      logDebug('Repo knowledge index incremental index completed', {
-        workspaceRoot: this.workspaceRoot,
-        resolvedFileCount: absolutePaths.length,
-      });
     });
   }
 
   async removeFiles(candidateFilePaths: string[], control?: IndexingControl): Promise<void> {
-    await this.runWithRecovery('removeFiles', async () => {
+    await this.runWithRecovery(async () => {
       const relativeTargets = this.resolveRelativeTargets(candidateFilePaths);
       if (relativeTargets.length === 0) {
-        logDebug('Repo knowledge index removeFiles skipped because no targets resolved', {
-          workspaceRoot: this.workspaceRoot,
-          candidateFileCount: candidateFilePaths.length,
-        });
         return;
       }
 
-      logDebug('Repo knowledge index removeFiles started', {
-        workspaceRoot: this.workspaceRoot,
-        targetCount: relativeTargets.length,
-        sampleTargets: relativeTargets.slice(0, 5),
-      });
       await control?.waitIfPaused?.();
-      await this.deleteByFilePaths(CODE_CHUNKS_TABLE, relativeTargets);
-      await this.deleteByFilePaths(CODE_DECLARATIONS_TABLE, relativeTargets);
-      await this.deleteByFilePaths(CODE_RELATIONSHIPS_TABLE, relativeTargets);
-      await this.deleteByFilePaths(FILE_SUMMARIES_TABLE, relativeTargets);
-      await this.writeRepoSummary(await this.readTable<FileSummaryRecord>(FILE_SUMMARIES_TABLE), this.getGitMetadata());
+      await this.ensureVectorStoreCompatible();
+      for (const relativePath of relativeTargets) {
+        await this.qdrantClient.deleteByFilter(buildQdrantFileFilter(this.repositoryId, relativePath, 'code_chunk'));
+      }
+
+      const state = await this.cacheStore.read();
+      state.declarations = state.declarations.filter((row) => !relativeTargets.includes(row.filePath));
+      state.relationships = state.relationships.filter((row) => !relativeTargets.includes(row.filePath));
+      state.fileSummaries = state.fileSummaries.filter((row) => !relativeTargets.includes(row.filePath));
+      await this.cacheStore.write(state);
+      await this.writeRepoSummary(this.getGitMetadata());
       await this.writeMetadata('ready');
-      logDebug('Repo knowledge index removeFiles completed', {
-        workspaceRoot: this.workspaceRoot,
-        removedFileCount: relativeTargets.length,
-      });
     });
   }
 
@@ -393,307 +379,185 @@ export class RepoKnowledgeIndex {
   }
 
   async searchCode(input: CodeSearchInput): Promise<CodeChunkRecord[]> {
-    return this.runWithRecovery('searchCode', async () => {
-      const table = await this.openTable(CODE_CHUNKS_TABLE);
-      if (!table) {
-        logDebug('Repo knowledge index searchCode skipped because table is unavailable', {
-          workspaceRoot: this.workspaceRoot,
-          filePath: input.filePath,
-        });
-        return [];
-      }
-
-      const metadata = this.getGitMetadata();
-      const results = await table
-        .search(Float32Array.from(embedText(input.queryText)), 'vector')
-        .where(`repositoryId = '${escapeSql(this.repositoryId)}' AND branch = '${escapeSql(input.branch ?? metadata.branch)}'`)
-        .limit((input.limit ?? 8) * 3)
-        .toArray() as CodeChunkRecord[];
+    return this.runWithRecovery(async () => {
+      await this.ensureStorageCompatible();
+      const rows = await this.qdrantClient.query<CodeChunkPayload>(
+        await embedText(input.queryText, this.connectionSettings),
+        {
+          filter: {
+            must: [
+              { key: 'recordType', match: { value: 'code_chunk' } },
+              { key: 'repositoryId', match: { value: this.repositoryId } },
+              { key: 'branch', match: { value: input.branch ?? this.getGitMetadata().branch } },
+            ],
+          },
+          limit: Math.min(input.limit ?? 8, this.connectionSettings.searchMaxResults) * 3,
+          scoreThreshold: this.connectionSettings.searchMinScore,
+        }
+      );
 
       const exclude = new Set(input.excludeFilePaths ?? []);
-      const rankedResults = rankCodeResults(results, input.queryText, input.filePath, exclude).slice(0, input.limit ?? 8);
-      logDebug('Repo knowledge index searchCode completed', {
-        workspaceRoot: this.workspaceRoot,
-        filePath: input.filePath,
-        branch: input.branch ?? metadata.branch,
-        rawResultCount: results.length,
-        rankedResultCount: rankedResults.length,
-        excludeCount: exclude.size,
-      });
-      return rankedResults;
+      const rankedResults = rankCodeResults(
+        rows.map((row) => ({ ...row.payload, symbolName: row.payload.symbolName ?? null, vector: [] })),
+        input.queryText,
+        input.filePath,
+        exclude
+      );
+      return rankedResults.slice(0, Math.min(input.limit ?? 8, this.connectionSettings.searchMaxResults));
     });
   }
 
   async searchReviewMemory(input: ReviewMemorySearchInput): Promise<ReviewMemoryRecord[]> {
-    return this.runWithRecovery('searchReviewMemory', async () => {
-      const table = await this.openTable(REVIEW_COMMENTS_TABLE);
-      if (!table) {
-        logDebug('Repo knowledge index searchReviewMemory skipped because table is unavailable', {
-          workspaceRoot: this.workspaceRoot,
-          filePath: input.filePath,
-        });
-        return [];
-      }
+    return this.runWithRecovery(async () => {
+      await this.ensureStorageCompatible();
+      const rows = await this.qdrantClient.query<ReviewMemoryPayload>(
+        await embedText(input.queryText, this.connectionSettings),
+        {
+          filter: {
+            must: [
+              { key: 'recordType', match: { value: 'review_memory' } },
+              { key: 'repositoryId', match: { value: this.repositoryId } },
+            ],
+          },
+          limit: Math.min(input.limit ?? 6, this.connectionSettings.searchMaxResults) * 3,
+          scoreThreshold: this.connectionSettings.searchMinScore,
+        }
+      );
 
-      const rows = await table
-        .search(Float32Array.from(embedText(input.queryText)), 'vector')
-        .where(`repositoryId = '${escapeSql(this.repositoryId)}'`)
-        .limit((input.limit ?? 6) * 3)
-        .toArray() as ReviewMemoryRecord[];
-
-      const rankedRows = rows
+      return rows
+        .map((row) => ({ ...row.payload, vector: [] }))
         .sort((left, right) => compareOutcome(right.outcome) - compareOutcome(left.outcome))
-        .slice(0, input.limit ?? 6);
-      logDebug('Repo knowledge index searchReviewMemory completed', {
-        workspaceRoot: this.workspaceRoot,
-        filePath: input.filePath,
-        rawResultCount: rows.length,
-        rankedResultCount: rankedRows.length,
-        sameFileResultCount: rankedRows.filter((row) => row.filePath === input.filePath).length,
-      });
-      return rankedRows;
+        .slice(0, Math.min(input.limit ?? 6, this.connectionSettings.searchMaxResults));
     });
   }
 
   async getExactReviewRun(reviewFingerprint: string): Promise<ExactReviewRunRecord | undefined> {
-    return this.runWithRecovery('getExactReviewRun', async () => {
-      const table = await this.openTable(EXACT_REVIEW_RUNS_TABLE);
-      if (!table) {
-        return undefined;
-      }
-
-      const rows = await table
-        .query()
-        .where(
-          `repositoryId = '${escapeSql(this.repositoryId)}' AND reviewFingerprint = '${escapeSql(reviewFingerprint)}'`
-        )
-        .limit(1)
-        .toArray() as ExactReviewRunRecord[];
-
-      return rows[0];
-    });
+    const state = await this.cacheStore.read();
+    return state.exactReviewRuns.find((row) => row.repositoryId === this.repositoryId && row.reviewFingerprint === reviewFingerprint);
   }
 
   async getExactReviewFindings(reviewFingerprint: string): Promise<ExactReviewFindingRecord[]> {
-    return this.runWithRecovery('getExactReviewFindings', async () => {
-      const table = await this.openTable(EXACT_REVIEW_FINDINGS_TABLE);
-      if (!table) {
-        return [];
-      }
-
-      const rows = await table
-        .query()
-        .where(
-          `repositoryId = '${escapeSql(this.repositoryId)}' AND reviewFingerprint = '${escapeSql(reviewFingerprint)}'`
-        )
-        .toArray() as ExactReviewFindingRecord[];
-
-      return rows.sort(compareExactReviewFindings);
-    });
+    const state = await this.cacheStore.read();
+    return state.exactReviewFindings
+      .filter((row) => row.repositoryId === this.repositoryId && row.reviewFingerprint === reviewFingerprint)
+      .sort(compareExactReviewFindings);
   }
 
   async getExactReviewUnit(unitFingerprint: string): Promise<ExactReviewUnitRecord | undefined> {
-    return this.runWithRecovery('getExactReviewUnit', async () => {
-      const table = await this.openTable(EXACT_REVIEW_UNITS_TABLE);
-      if (!table) {
-        return undefined;
-      }
-
-      const rows = await table
-        .query()
-        .where(
-          `repositoryId = '${escapeSql(this.repositoryId)}' AND unitFingerprint = '${escapeSql(unitFingerprint)}'`
-        )
-        .limit(1)
-        .toArray() as ExactReviewUnitRecord[];
-
-      return rows[0];
-    });
+    const state = await this.cacheStore.read();
+    return state.exactReviewUnits.find((row) => row.repositoryId === this.repositoryId && row.unitFingerprint === unitFingerprint);
   }
 
   async getExactReviewUnitFindings(unitFingerprint: string): Promise<ExactReviewFindingRecord[]> {
-    return this.runWithRecovery('getExactReviewUnitFindings', async () => {
-      const table = await this.openTable(EXACT_REVIEW_FINDINGS_TABLE);
-      if (!table) {
-        return [];
+    const state = await this.cacheStore.read();
+    const byFindingKey = new Map<string, ExactReviewFindingRecord>();
+    for (const row of state.exactReviewFindings
+      .filter((entry) => entry.repositoryId === this.repositoryId && entry.unitFingerprint === unitFingerprint)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))) {
+      if (!byFindingKey.has(row.findingKey)) {
+        byFindingKey.set(row.findingKey, row);
       }
+    }
 
-      const rows = await table
-        .query()
-        .where(
-          `repositoryId = '${escapeSql(this.repositoryId)}' AND unitFingerprint = '${escapeSql(unitFingerprint)}'`
-        )
-        .toArray() as ExactReviewFindingRecord[];
-
-      const byFindingKey = new Map<string, ExactReviewFindingRecord>();
-      for (const row of rows.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))) {
-        if (!byFindingKey.has(row.findingKey)) {
-          byFindingKey.set(row.findingKey, row);
-        }
-      }
-
-      return Array.from(byFindingKey.values()).sort(compareExactReviewFindings);
-    });
+    return Array.from(byFindingKey.values()).sort(compareExactReviewFindings);
   }
 
   async getFileSummary(filePath: string): Promise<FileSummaryRecord | undefined> {
-    return this.runWithRecovery('getFileSummary', async () => {
-      const table = await this.openTable(FILE_SUMMARIES_TABLE);
-      if (!table) {
-        return undefined;
-      }
-
-      const rows = await table
-        .query()
-        .where(`repositoryId = '${escapeSql(this.repositoryId)}' AND filePath = '${escapeSql(filePath)}'`)
-        .limit(1)
-        .toArray() as FileSummaryRecord[];
-
-      return rows[0];
-    });
+    const state = await this.cacheStore.read();
+    return state.fileSummaries.find((row) => row.repositoryId === this.repositoryId && row.filePath === filePath);
   }
 
   async getRepoSummary(): Promise<RepoSummaryRecord | undefined> {
-    return this.runWithRecovery('getRepoSummary', async () => {
-      const table = await this.openTable(REPO_SUMMARIES_TABLE);
-      if (!table) {
-        return undefined;
-      }
-
-      const rows = await table
-        .query()
-        .where(`repositoryId = '${escapeSql(this.repositoryId)}'`)
-        .limit(1)
-        .toArray() as RepoSummaryRecord[];
-
-      return rows[0];
-    });
+    const state = await this.cacheStore.read();
+    return state.repoSummary?.repositoryId === this.repositoryId ? state.repoSummary : undefined;
   }
 
   async getDeclarationsForFile(filePath: string): Promise<CodeDeclarationRecord[]> {
-    return this.runWithRecovery('getDeclarationsForFile', async () => {
-      const table = await this.openTable(CODE_DECLARATIONS_TABLE);
-      if (!table) {
-        return [];
-      }
-
-      const rows = await table
-        .query()
-        .where(
-          `repositoryId = '${escapeSql(this.repositoryId)}' AND filePath = '${escapeSql(filePath)}'`
-        )
-        .toArray() as CodeDeclarationRecord[];
-
-      return rows.sort((left, right) => left.startLine - right.startLine);
-    });
+    const state = await this.cacheStore.read();
+    return state.declarations
+      .filter((row) => row.repositoryId === this.repositoryId && row.filePath === filePath)
+      .sort((left, right) => left.startLine - right.startLine);
   }
 
   async getRelationshipsForFile(filePath: string): Promise<CodeRelationshipRecord[]> {
-    return this.runWithRecovery('getRelationshipsForFile', async () => {
-      const table = await this.openTable(CODE_RELATIONSHIPS_TABLE);
-      if (!table) {
-        return [];
-      }
-
-      const rows = await table
-        .query()
-        .where(
-          `repositoryId = '${escapeSql(this.repositoryId)}' AND filePath = '${escapeSql(filePath)}'`
-        )
-        .toArray() as CodeRelationshipRecord[];
-
-      return rows.sort((left, right) => left.line - right.line);
-    });
+    const state = await this.cacheStore.read();
+    return state.relationships
+      .filter((row) => row.repositoryId === this.repositoryId && row.filePath === filePath)
+      .sort((left, right) => left.line - right.line);
   }
 
   async searchDeclarationsByName(symbolNames: string[], limit = 20): Promise<CodeDeclarationRecord[]> {
-    return this.runWithRecovery('searchDeclarationsByName', async () => {
-      const names = [...new Set(symbolNames.filter(Boolean))];
-      if (names.length === 0) {
-        return [];
-      }
-
-      const table = await this.openTable(CODE_DECLARATIONS_TABLE);
-      if (!table) {
-        return [];
-      }
-
-      const metadata = this.getGitMetadata();
-      const rows = await table
-        .query()
-        .where(
-          `repositoryId = '${escapeSql(this.repositoryId)}' AND branch = '${escapeSql(metadata.branch)}' AND ${buildInPredicate('symbolName', names)}`
-        )
-        .limit(limit)
-        .toArray() as CodeDeclarationRecord[];
-
-      return rows.sort((left, right) => left.filePath.localeCompare(right.filePath) || left.startLine - right.startLine);
-    });
+    const state = await this.cacheStore.read();
+    const names = new Set(symbolNames.filter(Boolean));
+    const branch = this.getGitMetadata().branch;
+    return state.declarations
+      .filter((row) => row.repositoryId === this.repositoryId && row.branch === branch && names.has(row.symbolName))
+      .sort((left, right) => left.filePath.localeCompare(right.filePath) || left.startLine - right.startLine)
+      .slice(0, limit);
   }
 
-  async upsertExactReviewRun(
-    record: Omit<ExactReviewRunRecord, 'repositoryId' | 'updatedAt'>
-  ): Promise<void> {
-    await this.runWithRecovery('upsertExactReviewRun', async () => {
-      await this.upsertRowsById(EXACT_REVIEW_RUNS_TABLE, [{
-        ...record,
-        repositoryId: this.repositoryId,
-        updatedAt: new Date().toISOString(),
-      }]);
-      await this.pruneTableByRetention<ExactReviewRunRecord>(EXACT_REVIEW_RUNS_TABLE, EXACT_REVIEW_RUN_RETENTION);
-    });
+  async upsertExactReviewRun(record: Omit<ExactReviewRunRecord, 'repositoryId' | 'updatedAt'>): Promise<void> {
+    await this.ensureMetadataInitialized();
+    const state = await this.cacheStore.read();
+    state.exactReviewRuns = upsertById(state.exactReviewRuns, [{
+      ...record,
+      repositoryId: this.repositoryId,
+      updatedAt: new Date().toISOString(),
+    }]);
+    state.exactReviewRuns = pruneByRetention(state.exactReviewRuns, EXACT_REVIEW_RUN_RETENTION);
+    await this.cacheStore.write(state);
   }
 
-  async upsertExactReviewUnit(
-    record: Omit<ExactReviewUnitRecord, 'repositoryId' | 'updatedAt'>
-  ): Promise<void> {
-    await this.runWithRecovery('upsertExactReviewUnit', async () => {
-      await this.upsertRowsById(EXACT_REVIEW_UNITS_TABLE, [{
-        ...record,
-        repositoryId: this.repositoryId,
-        updatedAt: new Date().toISOString(),
-      }]);
-      await this.pruneTableByRetention<ExactReviewUnitRecord>(EXACT_REVIEW_UNITS_TABLE, EXACT_REVIEW_UNIT_RETENTION);
-    });
+  async upsertExactReviewUnit(record: Omit<ExactReviewUnitRecord, 'repositoryId' | 'updatedAt'>): Promise<void> {
+    await this.ensureMetadataInitialized();
+    const state = await this.cacheStore.read();
+    state.exactReviewUnits = upsertById(state.exactReviewUnits, [{
+      ...record,
+      repositoryId: this.repositoryId,
+      updatedAt: new Date().toISOString(),
+    }]);
+    state.exactReviewUnits = pruneByRetention(state.exactReviewUnits, EXACT_REVIEW_UNIT_RETENTION);
+    await this.cacheStore.write(state);
   }
 
-  async upsertExactReviewFinding(
-    record: Omit<ExactReviewFindingRecord, 'repositoryId' | 'updatedAt'>
-  ): Promise<void> {
-    await this.runWithRecovery('upsertExactReviewFinding', async () => {
-      await this.upsertRowsById(EXACT_REVIEW_FINDINGS_TABLE, [{
-        ...record,
-        repositoryId: this.repositoryId,
-        updatedAt: new Date().toISOString(),
-      }]);
-      await this.pruneTableByRetention<ExactReviewFindingRecord>(EXACT_REVIEW_FINDINGS_TABLE, EXACT_REVIEW_FINDING_RETENTION);
-    });
+  async upsertExactReviewFinding(record: Omit<ExactReviewFindingRecord, 'repositoryId' | 'updatedAt'>): Promise<void> {
+    await this.ensureMetadataInitialized();
+    const state = await this.cacheStore.read();
+    state.exactReviewFindings = upsertById(state.exactReviewFindings, [{
+      ...record,
+      repositoryId: this.repositoryId,
+      updatedAt: new Date().toISOString(),
+    }]);
+    state.exactReviewFindings = pruneByRetention(state.exactReviewFindings, EXACT_REVIEW_FINDING_RETENTION);
+    await this.cacheStore.write(state);
   }
 
   async replaceExactReviewFindings(
     reviewFingerprint: string,
     findings: Array<Omit<ExactReviewFindingRecord, 'repositoryId' | 'updatedAt'>>
   ): Promise<void> {
-    await this.runWithRecovery('replaceExactReviewFindings', async () => {
-      await this.deleteWhere(
-        EXACT_REVIEW_FINDINGS_TABLE,
-        `repositoryId = '${escapeSql(this.repositoryId)}' AND reviewFingerprint = '${escapeSql(reviewFingerprint)}'`
-      );
-      if (findings.length > 0) {
-        await this.upsertRowsById(EXACT_REVIEW_FINDINGS_TABLE, findings.map((record) => ({
-          ...record,
-          repositoryId: this.repositoryId,
-          updatedAt: new Date().toISOString(),
-        })));
-      }
-      await this.pruneTableByRetention<ExactReviewFindingRecord>(EXACT_REVIEW_FINDINGS_TABLE, EXACT_REVIEW_FINDING_RETENTION);
-    });
+    await this.ensureMetadataInitialized();
+    const state = await this.cacheStore.read();
+    state.exactReviewFindings = state.exactReviewFindings.filter(
+      (row) => !(row.repositoryId === this.repositoryId && row.reviewFingerprint === reviewFingerprint)
+    );
+    state.exactReviewFindings = upsertById(state.exactReviewFindings, findings.map((record) => ({
+      ...record,
+      repositoryId: this.repositoryId,
+      updatedAt: new Date().toISOString(),
+    })));
+    state.exactReviewFindings = pruneByRetention(state.exactReviewFindings, EXACT_REVIEW_FINDING_RETENTION);
+    await this.cacheStore.write(state);
   }
 
-  async upsertReviewMemory(record: Omit<ReviewMemoryRecord, 'repositoryId' | 'vector' | 'updatedAt' | 'branch' | 'commitSha'>): Promise<void> {
-    await this.runWithRecovery('upsertReviewMemory', async () => {
+  async upsertReviewMemory(
+    record: Omit<ReviewMemoryRecord, 'repositoryId' | 'vector' | 'updatedAt' | 'branch' | 'commitSha'>
+  ): Promise<void> {
+    await this.runWithRecovery(async () => {
+      await this.ensureVectorStoreCompatible();
       const metadata = this.getGitMetadata();
-      await this.upsertRowsById(REVIEW_COMMENTS_TABLE, [{
+      const updatedAt = new Date().toISOString();
+      const payload: ReviewMemoryPayload = {
         ...record,
         repositoryId: this.repositoryId,
         filePath: record.filePath ?? '',
@@ -702,15 +566,36 @@ export class RepoKnowledgeIndex {
         severity: record.severity ?? '',
         branch: metadata.branch,
         commitSha: metadata.commitSha,
-        updatedAt: new Date().toISOString(),
-        vector: embedText(`${record.filePath ?? ''}\n${record.comment}`),
+        updatedAt,
+        recordType: 'review_memory',
+      };
+      await this.qdrantClient.upsertPoints([{
+        id: payload.id,
+        payload,
+        vector: await embedText(`${record.filePath ?? ''}\n${record.comment}`, this.connectionSettings),
       }]);
-      await this.pruneTableByRetention<ReviewMemoryRecord>(REVIEW_COMMENTS_TABLE, REVIEW_COMMENT_RETENTION);
+
+      const state = await this.cacheStore.read();
+      const nextReviewMemories = pruneByRetention(
+        upsertById(state.reviewMemories, [{ id: payload.id, updatedAt }]),
+        REVIEW_COMMENT_RETENTION
+      );
+      const retainedIds = new Set(nextReviewMemories.map((entry) => entry.id));
+      const staleIds = state.reviewMemories
+        .filter((entry) => !retainedIds.has(entry.id))
+        .map((entry) => entry.id);
+      state.reviewMemories = nextReviewMemories;
+      await this.cacheStore.write(state);
+
+      for (const staleId of staleIds) {
+        await this.qdrantClient.deleteByFilter(buildQdrantMatchFilter('id', staleId));
+      }
     });
   }
 
   async getIndexMetadata(): Promise<IndexMetadataRecord | undefined> {
-    return this.runWithRecovery('getIndexMetadata', async () => this.readMetadata());
+    const state = await this.cacheStore.read();
+    return state.metadata;
   }
 
   async clearStorage(): Promise<void> {
@@ -718,184 +603,7 @@ export class RepoKnowledgeIndex {
   }
 
   async close(): Promise<void> {
-    const connection = await this.connectionPromise;
-    connection.close();
-    instanceCache.delete(this.workspaceRoot);
-    this.vectorIndexedTables.clear();
-  }
-
-  private async openTable(name: string): Promise<Table | undefined> {
-    const connection = await this.connectionPromise;
-    const tableNames = await connection.tableNames();
-    if (!tableNames.includes(name)) {
-      return undefined;
-    }
-    try {
-      return await connection.openTable(name);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes('not found') || message.includes('was not found')) {
-        return undefined;
-      }
-      throw error;
-    }
-  }
-
-  private async readTable<T>(name: string): Promise<T[]> {
-    const table = await this.openTable(name);
-    if (!table) {
-      return [];
-    }
-    return table.query().toArray() as Promise<T[]>;
-  }
-
-  private async replaceTable<T extends Record<string, unknown>>(name: string, rows: T[]): Promise<void> {
-    const connection = await this.connectionPromise;
-    const tableNames = await connection.tableNames();
-    if (rows.length === 0) {
-      if (tableNames.includes(name)) {
-        await connection.dropTable(name);
-      }
-      return;
-    }
-
-    const serializableRows = rows.map((row) => serializeRow(row));
-
-    if (!tableNames.includes(name)) {
-      const table = await connection.createTable(name, serializableRows, {
-        mode: 'create',
-        existOk: true,
-      });
-      await this.maybeEnsureVectorIndex(name, table, rows);
-      return;
-    }
-
-    const table = await connection.openTable(name);
-    await table.add(serializableRows, { mode: 'overwrite' });
-    await this.maybeEnsureVectorIndex(name, table, rows);
-  }
-
-  private async appendRows<T extends Record<string, unknown>>(name: string, rows: T[]): Promise<void> {
-    if (rows.length === 0) {
-      return;
-    }
-
-    const connection = await this.connectionPromise;
-    const tableNames = await connection.tableNames();
-    const serializableRows = rows.map((row) => serializeRow(row));
-
-    if (!tableNames.includes(name)) {
-      const table = await connection.createTable(name, serializableRows, {
-        mode: 'create',
-        existOk: true,
-      });
-      await this.maybeEnsureVectorIndex(name, table, rows);
-      return;
-    }
-
-    const table = await connection.openTable(name);
-    await table.add(serializableRows, { mode: 'append' });
-    await this.maybeEnsureVectorIndex(name, table, rows);
-  }
-
-  private async upsertRowsById<T extends Record<string, unknown>>(name: string, rows: T[]): Promise<void> {
-    if (rows.length === 0) {
-      return;
-    }
-
-    const connection = await this.connectionPromise;
-    const tableNames = await connection.tableNames();
-    const serializableRows = rows.map((row) => serializeRow(row));
-
-    if (!tableNames.includes(name)) {
-      const table = await connection.createTable(name, serializableRows, {
-        mode: 'create',
-        existOk: true,
-      });
-      await this.maybeEnsureVectorIndex(name, table, rows);
-      return;
-    }
-
-    const table = await connection.openTable(name);
-    await table
-      .mergeInsert('id')
-      .whenMatchedUpdateAll()
-      .whenNotMatchedInsertAll()
-      .execute(serializableRows);
-    await this.maybeEnsureVectorIndex(name, table, rows);
-  }
-
-  private async deleteByFilePaths(name: string, relativeTargets: string[]): Promise<void> {
-    if (relativeTargets.length === 0) {
-      return;
-    }
-
-    const table = await this.openTable(name);
-    if (!table) {
-      return;
-    }
-
-    await table.delete(buildInPredicate('filePath', relativeTargets));
-  }
-
-  private async deleteWhere(name: string, predicate: string): Promise<void> {
-    const table = await this.openTable(name);
-    if (!table) {
-      return;
-    }
-
-    await table.delete(predicate);
-  }
-
-  private async pruneTableByRetention<T extends { id: string; updatedAt: string }>(name: string, limit: number): Promise<void> {
-    const table = await this.openTable(name);
-    if (!table) {
-      return;
-    }
-
-    const rows = await table.query().where(`repositoryId = '${escapeSql(this.repositoryId)}'`).toArray() as T[];
-    if (rows.length <= limit) {
-      return;
-    }
-
-    const staleRows = rows
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .slice(limit);
-    if (staleRows.length === 0) {
-      return;
-    }
-
-    await table.delete(buildInPredicate('id', staleRows.map((row) => row.id)));
-  }
-
-  private resolveCandidatePaths(candidateFilePaths?: string[]): string[] {
-    if (!candidateFilePaths || candidateFilePaths.length === 0) {
-      return [];
-    }
-
-    return [...new Set(candidateFilePaths.map((candidate) => (
-      path.isAbsolute(candidate) ? candidate : path.join(this.workspaceRoot, candidate)
-    )))].filter((absolutePath) => {
-      const relativePath = toRelativeFilePath(this.workspaceRoot, absolutePath);
-      return relativePath !== undefined && isIndexableFile(absolutePath) && !isIgnoredRelativePath(relativePath);
-    });
-  }
-
-  private resolveRelativeTargets(candidateFilePaths?: string[]): string[] {
-    if (!candidateFilePaths || candidateFilePaths.length === 0) {
-      return [];
-    }
-
-    return [...new Set(candidateFilePaths.map((candidate) => {
-      const absolutePath = path.isAbsolute(candidate)
-        ? candidate
-        : path.join(this.workspaceRoot, candidate);
-      return toRelativeFilePath(this.workspaceRoot, absolutePath);
-    }))].filter((relativePath): relativePath is string => (
-      relativePath !== undefined
-      && SUPPORTED_EXTENSIONS.has(path.extname(relativePath))
-      && !isIgnoredRelativePath(relativePath)
-    ));
+    instanceCache.delete(buildInstanceCacheKey(this.workspaceRoot));
   }
 
   private async scanWorkspaceFiles(control?: IndexingControl): Promise<string[]> {
@@ -930,13 +638,6 @@ export class RepoKnowledgeIndex {
     return files.sort();
   }
 
-  private getGitMetadata(): { branch: string; commitSha: string } {
-    return {
-      branch: readGitValue(this.workspaceRoot, ['rev-parse', '--abbrev-ref', 'HEAD']) ?? 'workspace',
-      commitSha: readGitValue(this.workspaceRoot, ['rev-parse', '--short', 'HEAD']) ?? 'workspace',
-    };
-  }
-
   private async upsertFiles(
     absolutePaths: string[],
     options: { updateRepoSummary: boolean; metadata?: { branch: string; commitSha: string } },
@@ -946,14 +647,20 @@ export class RepoKnowledgeIndex {
       return;
     }
 
+    await this.ensureVectorStoreCompatible();
     const metadata = options.metadata ?? this.getGitMetadata();
-    const nextChunks: CodeChunkRecord[] = [];
+    const state = await this.cacheStore.read();
+    const nextChunks: Array<{ payload: CodeChunkPayload; vector: number[] }> = [];
     const nextDeclarations: CodeDeclarationRecord[] = [];
     const nextRelationships: CodeRelationshipRecord[] = [];
     const nextFileSummaries: FileSummaryRecord[] = [];
     const relativePaths = absolutePaths
       .map((absolutePath) => toRelativeFilePath(this.workspaceRoot, absolutePath))
       .filter((relativePath): relativePath is string => relativePath !== undefined);
+
+    state.declarations = state.declarations.filter((row) => !relativePaths.includes(row.filePath));
+    state.relationships = state.relationships.filter((row) => !relativePaths.includes(row.filePath));
+    state.fileSummaries = state.fileSummaries.filter((row) => !relativePaths.includes(row.filePath));
 
     for (let index = 0; index < absolutePaths.length; index += 1) {
       await control?.waitIfPaused?.();
@@ -967,6 +674,8 @@ export class RepoKnowledgeIndex {
         continue;
       }
 
+      await this.qdrantClient.deleteByFilter(buildQdrantFileFilter(this.repositoryId, relativePath, 'code_chunk'));
+
       const language = getLanguageIdFromPath(relativePath);
       const fileHash = sha256(code);
       const structure = extractCodeStructure(language, code, relativePath);
@@ -974,8 +683,10 @@ export class RepoKnowledgeIndex {
       const updatedAt = new Date().toISOString();
 
       for (const chunk of chunks) {
-        nextChunks.push({
-          id: `${this.repositoryId}:${relativePath}:${chunk.startLine}-${chunk.endLine}:${fileHash.slice(0, 12)}`,
+        const payload: CodeChunkPayload = {
+          id: chunk.segmentHash
+            ? `${this.repositoryId}:${chunk.segmentHash}`
+            : `${this.repositoryId}:${relativePath}:${chunk.startLine}-${chunk.endLine}${chunk.segmentIndex === undefined ? '' : `:${chunk.segmentIndex}`}`,
           repositoryId: this.repositoryId,
           commitSha: metadata.commitSha,
           branch: metadata.branch,
@@ -986,8 +697,12 @@ export class RepoKnowledgeIndex {
           endLine: chunk.endLine,
           content: chunk.content,
           contentHash: sha256(chunk.content),
-          vector: embedText(`${relativePath}\n${chunk.symbolName ?? ''}\n${chunk.content}`),
           updatedAt,
+          recordType: 'code_chunk',
+        };
+        nextChunks.push({
+          payload,
+          vector: await embedText(`${relativePath}\n${chunk.symbolName ?? ''}\n${chunk.content}`, this.connectionSettings),
         });
       }
 
@@ -1005,7 +720,7 @@ export class RepoKnowledgeIndex {
           endLine: block.endLine,
           content: block.content,
           contentHash: sha256(block.content),
-          vector: embedText(`${relativePath}\n${block.kind} ${block.name}\n${block.content}`),
+          vector: [],
           updatedAt,
         });
       }
@@ -1037,7 +752,7 @@ export class RepoKnowledgeIndex {
         language,
         summary,
         contentHash: fileHash,
-        vector: embedText(`${relativePath}\n${summary}`),
+        vector: [],
         updatedAt,
       });
 
@@ -1047,49 +762,169 @@ export class RepoKnowledgeIndex {
       }
     }
 
-    await control?.waitIfPaused?.();
-    await this.deleteByFilePaths(CODE_CHUNKS_TABLE, relativePaths);
-    await this.deleteByFilePaths(CODE_DECLARATIONS_TABLE, relativePaths);
-    await this.deleteByFilePaths(CODE_RELATIONSHIPS_TABLE, relativePaths);
-    await this.deleteByFilePaths(FILE_SUMMARIES_TABLE, relativePaths);
-    await this.appendRows(CODE_CHUNKS_TABLE, nextChunks);
-    await this.appendRows(CODE_DECLARATIONS_TABLE, nextDeclarations);
-    await this.appendRows(CODE_RELATIONSHIPS_TABLE, nextRelationships);
-    await this.upsertRowsById(FILE_SUMMARIES_TABLE, nextFileSummaries);
+    await this.qdrantClient.upsertPoints(nextChunks.map((entry) => ({
+      id: entry.payload.id,
+      payload: entry.payload,
+      vector: entry.vector,
+    })));
+
+    state.declarations.push(...nextDeclarations);
+    state.relationships.push(...nextRelationships);
+    state.fileSummaries = upsertById(state.fileSummaries, nextFileSummaries);
+    await this.cacheStore.write(state);
     if (options.updateRepoSummary) {
-      await this.writeRepoSummary(await this.readTable<FileSummaryRecord>(FILE_SUMMARIES_TABLE), metadata);
+      await this.writeRepoSummary(metadata);
     }
   }
 
-  private async clearIndexedContentTables(): Promise<void> {
-    await this.replaceTable(CODE_CHUNKS_TABLE, []);
-    await this.replaceTable(CODE_DECLARATIONS_TABLE, []);
-    await this.replaceTable(CODE_RELATIONSHIPS_TABLE, []);
-    await this.replaceTable(FILE_SUMMARIES_TABLE, []);
-    await this.replaceTable(REPO_SUMMARIES_TABLE, []);
-  }
-
-  private async writeRepoSummary(fileSummaries: FileSummaryRecord[], metadata: { branch: string; commitSha: string }): Promise<void> {
-    const allSummaries = fileSummaries
+  private async writeRepoSummary(metadata: { branch: string; commitSha: string }): Promise<void> {
+    const state = await this.cacheStore.read();
+    const allSummaries = state.fileSummaries
       .filter((row) => row.repositoryId === this.repositoryId)
       .map((row) => `${row.filePath}: ${row.summary}`);
     const repoSummary = buildRepoSummary(allSummaries);
-
-    await this.upsertRowsById(REPO_SUMMARIES_TABLE, [
-      {
-        id: this.repositoryId,
-        repositoryId: this.repositoryId,
-        commitSha: metadata.commitSha,
-        branch: metadata.branch,
-        summary: repoSummary,
-        contentHash: sha256(repoSummary),
-        vector: embedText(repoSummary),
-        updatedAt: new Date().toISOString(),
-      },
-    ]);
+    state.repoSummary = {
+      id: this.repositoryId,
+      repositoryId: this.repositoryId,
+      commitSha: metadata.commitSha,
+      branch: metadata.branch,
+      summary: repoSummary,
+      contentHash: sha256(repoSummary),
+      vector: [],
+      updatedAt: new Date().toISOString(),
+    };
+    await this.cacheStore.write(state);
   }
 
-  private async runWithRecovery<T>(operationName: string, operation: () => Promise<T>): Promise<T> {
+  private resolveCandidatePaths(candidateFilePaths?: string[]): string[] {
+    if (!candidateFilePaths || candidateFilePaths.length === 0) {
+      return [];
+    }
+
+    return [...new Set(candidateFilePaths.map((candidate) => (
+      path.isAbsolute(candidate) ? candidate : path.join(this.workspaceRoot, candidate)
+    )))].filter((absolutePath) => {
+      const relativePath = toRelativeFilePath(this.workspaceRoot, absolutePath);
+      return relativePath !== undefined && isIndexableFile(absolutePath) && !isIgnoredRelativePath(relativePath);
+    });
+  }
+
+  private resolveRelativeTargets(candidateFilePaths?: string[]): string[] {
+    if (!candidateFilePaths || candidateFilePaths.length === 0) {
+      return [];
+    }
+
+    return [...new Set(candidateFilePaths.map((candidate) => {
+      const absolutePath = path.isAbsolute(candidate)
+        ? candidate
+        : path.join(this.workspaceRoot, candidate);
+      return toRelativeFilePath(this.workspaceRoot, absolutePath);
+    }))].filter((relativePath): relativePath is string => (
+      relativePath !== undefined
+      && SUPPORTED_EXTENSIONS.has(path.extname(relativePath))
+      && !isIgnoredRelativePath(relativePath)
+    ));
+  }
+
+  private getGitMetadata(): { branch: string; commitSha: string } {
+    return {
+      branch: readGitValue(this.workspaceRoot, ['rev-parse', '--abbrev-ref', 'HEAD']) ?? 'workspace',
+      commitSha: readGitValue(this.workspaceRoot, ['rev-parse', '--short', 'HEAD']) ?? 'workspace',
+    };
+  }
+
+  private async ensureVectorStoreCompatible(): Promise<void> {
+    if (this.collectionReady) {
+      return;
+    }
+
+    await this.qdrantClient.ensureCollection();
+    this.collectionReady = true;
+  }
+
+  private async ensureStorageCompatible(): Promise<void> {
+    await this.ensureVectorStoreCompatible();
+    const state = await this.cacheStore.read();
+    if (!state.metadata) {
+      if (
+        state.declarations.length > 0
+        || state.relationships.length > 0
+        || state.fileSummaries.length > 0
+        || state.exactReviewRuns.length > 0
+        || state.exactReviewUnits.length > 0
+        || state.exactReviewFindings.length > 0
+        || state.reviewMemories.length > 0
+      ) {
+        throw new Error('INDEX_METADATA_MISSING');
+      }
+
+      await this.writeMetadata('ready');
+      return;
+    }
+
+    if (
+      state.metadata.schemaVersion !== INDEX_SCHEMA_VERSION
+      || state.metadata.embeddingVersion !== this.embeddingVersion
+    ) {
+      throw new Error('INDEX_SCHEMA_MISMATCH');
+    }
+  }
+
+  private async writeMetadata(status: IndexMetadataRecord['status'], lastError: string = ''): Promise<void> {
+    const state = await this.cacheStore.read();
+    state.metadata = {
+      id: this.repositoryId,
+      repositoryId: this.repositoryId,
+      schemaVersion: INDEX_SCHEMA_VERSION,
+      embeddingVersion: this.embeddingVersion,
+      status,
+      updatedAt: new Date().toISOString(),
+      lastError,
+    };
+    await this.cacheStore.write(state);
+  }
+
+  private async ensureMetadataInitialized(): Promise<void> {
+    const state = await this.cacheStore.read();
+    if (state.metadata) {
+      return;
+    }
+
+    state.metadata = {
+      id: this.repositoryId,
+      repositoryId: this.repositoryId,
+      schemaVersion: INDEX_SCHEMA_VERSION,
+      embeddingVersion: this.embeddingVersion,
+      status: 'ready',
+      updatedAt: new Date().toISOString(),
+      lastError: '',
+    };
+    await this.cacheStore.write(state);
+  }
+
+  private async resetIndexedContent(): Promise<void> {
+    await this.qdrantClient.recreateCollection();
+    this.collectionReady = true;
+    const state = await this.cacheStore.read();
+    state.declarations = [];
+    state.relationships = [];
+    state.fileSummaries = [];
+    state.reviewMemories = [];
+    state.repoSummary = undefined;
+    await this.cacheStore.write(state);
+    this.hasIndexedWorkspace = false;
+  }
+
+  private async resetIndexStorage(): Promise<void> {
+    await this.qdrantClient.deleteCollection();
+    this.collectionReady = false;
+    await this.cacheStore.reset();
+    fs.rmSync(this.dbPath, { recursive: true, force: true });
+    fs.mkdirSync(this.dbPath, { recursive: true });
+    this.hasIndexedWorkspace = false;
+  }
+
+  private async runWithRecovery<T>(operation: () => Promise<T>): Promise<T> {
     try {
       await this.ensureStorageCompatible();
       return await operation();
@@ -1100,93 +935,12 @@ export class RepoKnowledgeIndex {
 
       logDebug('Repo knowledge index recovering from failure', {
         workspaceRoot: this.workspaceRoot,
-        operationName,
         error: error instanceof Error ? error.message : String(error),
       });
-      await this.resetIndexStorage();
-      await this.ensureStorageCompatible();
+      await this.resetIndexedContent();
+      await this.writeMetadata('ready');
       return operation();
     }
-  }
-
-  private async ensureStorageCompatible(): Promise<void> {
-    const connection = await this.connectionPromise;
-    const tableNames = await connection.tableNames();
-    if (!tableNames.includes(INDEX_METADATA_TABLE)) {
-      if (tableNames.length > 0) {
-        throw new Error('INDEX_METADATA_MISSING');
-      }
-
-      await this.writeMetadata('ready');
-      return;
-    }
-
-    const metadata = await this.readMetadata();
-    if (!metadata) {
-      throw new Error('INDEX_METADATA_MISSING');
-    }
-
-    if (
-      metadata.schemaVersion !== INDEX_SCHEMA_VERSION
-      || metadata.embeddingVersion !== EMBEDDING_ALGORITHM_VERSION
-    ) {
-      throw new Error('INDEX_SCHEMA_MISMATCH');
-    }
-  }
-
-  private async readMetadata(): Promise<IndexMetadataRecord | undefined> {
-    const table = await this.openTable(INDEX_METADATA_TABLE);
-    if (!table) {
-      return undefined;
-    }
-
-    const rows = await table
-      .query()
-      .where(`repositoryId = '${escapeSql(this.repositoryId)}'`)
-      .limit(1)
-      .toArray() as IndexMetadataRecord[];
-    return rows[0];
-  }
-
-  private async writeMetadata(status: IndexMetadataRecord['status'], lastError: string = ''): Promise<void> {
-    await this.upsertRowsById(INDEX_METADATA_TABLE, [{
-      id: this.repositoryId,
-      repositoryId: this.repositoryId,
-      schemaVersion: INDEX_SCHEMA_VERSION,
-      embeddingVersion: EMBEDDING_ALGORITHM_VERSION,
-      status,
-      updatedAt: new Date().toISOString(),
-      lastError,
-    }]);
-  }
-
-  private async resetIndexStorage(): Promise<void> {
-    const existingConnection = await this.connectionPromise.catch(() => undefined);
-    try {
-      existingConnection?.close();
-    } catch {
-      // Best effort before removing corrupted storage.
-    }
-
-    fs.rmSync(this.dbPath, { recursive: true, force: true });
-    fs.mkdirSync(this.dbPath, { recursive: true });
-    this.connectionPromise = getLanceDb().connect(this.dbPath);
-    this.hasIndexedWorkspace = false;
-    this.vectorIndexedTables.clear();
-  }
-
-  private async maybeEnsureVectorIndex<T extends Record<string, unknown>>(name: string, table: Table, rows: T[]): Promise<void> {
-    if (this.vectorIndexedTables.has(name)) {
-      return;
-    }
-
-    const sample = rows[0];
-    if (!sample || !('vector' in sample)) {
-      return;
-    }
-
-    await ensureVectorIndex(table);
-    this.vectorIndexedTables.add(name);
   }
 }
 
@@ -1195,6 +949,8 @@ interface ChunkLike {
   startLine: number;
   endLine: number;
   content: string;
+  segmentIndex?: number;
+  segmentHash?: string;
 }
 
 function extractChunksForFile(
@@ -1203,21 +959,32 @@ function extractChunksForFile(
   code: string,
   structure = extractCodeStructure(language, code, filePath)
 ): ChunkLike[] {
+  const semanticBlocks = parseCodeIndexBlocks(language, code, filePath);
+  if (semanticBlocks.length > 0) {
+    return semanticBlocks.map((block) => ({
+      symbolName: block.identifier,
+      startLine: block.startLine,
+      endLine: block.endLine,
+      content: block.content,
+      segmentHash: block.segmentHash,
+    }));
+  }
+
   if (language === 'json') {
     const schemaChunks = extractJsonSchemaChunks(code);
     if (schemaChunks.length > 0) {
-      return schemaChunks;
+      return splitOversizedChunks(schemaChunks);
     }
   }
 
   const structuredBlocks = structure.blocks;
   if (structuredBlocks.length > 0) {
-    return structuredBlocks.map((block) => ({
+    return splitOversizedChunks(structuredBlocks.map((block) => ({
       symbolName: block.name,
       startLine: block.startLine,
       endLine: block.endLine,
       content: block.content,
-    }));
+    })));
   }
 
   return buildWindowChunks(code);
@@ -1310,6 +1077,81 @@ function buildWindowChunks(code: string, chunkSize: number = 80): ChunkLike[] {
   }
 
   return chunks;
+}
+
+function splitOversizedChunks(chunks: ChunkLike[], maxChars: number = MAX_EMBEDDING_CHUNK_CHARS): ChunkLike[] {
+  return chunks.flatMap((chunk) => splitOversizedChunk(chunk, maxChars));
+}
+
+function splitOversizedChunk(chunk: ChunkLike, maxChars: number): ChunkLike[] {
+  if (chunk.content.length <= maxChars) {
+    return [chunk];
+  }
+
+  const lines = chunk.content.split('\n');
+  const segments: ChunkLike[] = [];
+  let currentLines: string[] = [];
+  let currentStartLine = chunk.startLine;
+  let currentLength = 0;
+  let segmentIndex = 0;
+
+  const flush = (endLine: number): void => {
+    if (currentLines.length === 0) {
+      return;
+    }
+
+    segments.push({
+      symbolName: chunk.symbolName,
+      startLine: currentStartLine,
+      endLine,
+      content: currentLines.join('\n'),
+      segmentIndex,
+    });
+    segmentIndex += 1;
+    currentLines = [];
+    currentLength = 0;
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const absoluteLine = chunk.startLine + index;
+    const slices = splitLineByLength(line, maxChars);
+
+    for (let sliceIndex = 0; sliceIndex < slices.length; sliceIndex += 1) {
+      const slice = slices[sliceIndex];
+      const additionLength = currentLines.length === 0 ? slice.length : slice.length + 1;
+      if (currentLines.length > 0 && currentLength + additionLength > maxChars) {
+        flush(absoluteLine - 1);
+        currentStartLine = absoluteLine;
+      } else if (currentLines.length === 0) {
+        currentStartLine = absoluteLine;
+      }
+
+      currentLines.push(slice);
+      currentLength += currentLines.length === 1 ? slice.length : slice.length + 1;
+
+      if (sliceIndex < slices.length - 1) {
+        flush(absoluteLine);
+        currentStartLine = absoluteLine;
+      }
+    }
+  }
+
+  flush(chunk.endLine);
+  return segments;
+}
+
+function splitLineByLength(line: string, maxChars: number): string[] {
+  if (line.length <= maxChars) {
+    return [line];
+  }
+
+  const segments: string[] = [];
+  for (let start = 0; start < line.length; start += maxChars) {
+    segments.push(line.slice(start, start + maxChars));
+  }
+
+  return segments;
 }
 
 function countBraceDelta(line: string): number {
@@ -1419,12 +1261,39 @@ function buildRepositoryId(workspaceRoot: string): string {
   return `repo_${sha256(workspaceRoot).slice(0, 12)}`;
 }
 
+function buildCollectionName(repositoryId: string): string {
+  return `ws-${repositoryId.replace(/^repo_/, '')}`;
+}
+
 function resolveStoragePathForWorkspace(workspaceRoot: string): string {
   if (configuredStorageRoot) {
     return path.join(configuredStorageRoot, 'code-index', buildRepositoryId(workspaceRoot));
   }
 
   return path.join(workspaceRoot, INDEX_DIRECTORY);
+}
+
+function resolveConnectionSettings(): CodeIndexResolvedSettings {
+  const defaults = getDefaultCodeIndexSettings();
+  return configuredConnectionSettings ?? {
+    ...defaults,
+    qdrantApiKey: undefined,
+  };
+}
+
+function buildInstanceCacheKey(workspaceRoot: string): string {
+  const settings = resolveConnectionSettings();
+  return [
+    workspaceRoot,
+    settings.embedderProvider,
+    settings.ollamaBaseUrl,
+    settings.ollamaModel,
+    settings.modelDimension,
+    settings.qdrantUrl,
+    settings.qdrantApiKey ?? '',
+    settings.searchMinScore,
+    settings.searchMaxResults,
+  ].join('::');
 }
 
 function sha256(value: string): string {
@@ -1484,43 +1353,27 @@ function readGitValue(workspaceRoot: string, args: string[]): string | undefined
   }
 }
 
-function escapeSql(value: string): string {
-  return value.replace(/'/g, "''");
-}
-
-function buildInPredicate(column: string, values: string[]): string {
-  return `${column} IN (${values.map((value) => `'${escapeSql(value)}'`).join(', ')})`;
-}
-
 function isRecoverableIndexError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return (
     message.includes('INDEX_METADATA_MISSING')
     || message.includes('INDEX_SCHEMA_MISMATCH')
-    || message.includes('Corrupt')
-    || message.includes('corrupt')
-    || message.includes('Invalid argument')
-    || message.includes('Arrow')
-    || message.includes('IO error')
-    || message.includes('not found')
+    || message.includes('Qdrant')
+    || message.includes('Embedding dimension mismatch')
+    || message.includes('Ollama embedding request failed')
   );
 }
 
-async function ensureVectorIndex(table: Table): Promise<void> {
-  try {
-    await table.createIndex('vector');
-  } catch {
-    // Ignore duplicate/index compatibility failures; search still works without it.
+function upsertById<T extends { id: string }>(existing: T[], next: T[]): T[] {
+  const rows = new Map(existing.map((row) => [row.id, row]));
+  for (const row of next) {
+    rows.set(row.id, row);
   }
+  return Array.from(rows.values());
 }
 
-function serializeRow<T extends Record<string, unknown>>(row: T): T {
-  if (!('vector' in row) || !Array.isArray(row.vector)) {
-    return row;
-  }
-
-  return {
-    ...row,
-    vector: Float32Array.from(row.vector as number[]),
-  };
+function pruneByRetention<T extends { updatedAt: string }>(rows: T[], limit: number): T[] {
+  return rows
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, limit);
 }

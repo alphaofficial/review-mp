@@ -70,15 +70,6 @@ export class CodeIndexOrchestrator implements vscode.Disposable {
       return;
     }
 
-    this.started = true;
-    this.knownBranch = await this.index.getCurrentBranch();
-    logDebug('Code index startup beginning', {
-      workspaceRoot: this.workspaceRoot,
-      branch: this.knownBranch,
-      batchSize: this.batchSize,
-      debounceMs: this.debounceMs,
-      branchPollMs: this.branchPollMs,
-    });
     this.setState({
       status: 'indexing',
       message: 'Indexing workspace',
@@ -86,12 +77,20 @@ export class CodeIndexOrchestrator implements vscode.Disposable {
       pendingFiles: 0,
       lastIndexedAt: this.state.lastIndexedAt,
     });
+    this.started = true;
     this.indexing = true;
 
-    this.installWatcher();
-    this.installBranchPoll();
-
     try {
+      this.knownBranch = await this.index.getCurrentBranch();
+      logDebug('Code index startup beginning', {
+        workspaceRoot: this.workspaceRoot,
+        branch: this.knownBranch,
+        batchSize: this.batchSize,
+        debounceMs: this.debounceMs,
+        branchPollMs: this.branchPollMs,
+      });
+      this.installWatcher();
+      this.installBranchPoll();
       const indexedFiles = await this.index.rebuildWorkspace();
       logDebug('Code index startup completed', {
         workspaceRoot: this.workspaceRoot,
@@ -107,6 +106,8 @@ export class CodeIndexOrchestrator implements vscode.Disposable {
         lastIndexedAt: Date.now(),
       });
     } catch (error) {
+      this.started = false;
+      this.uninstallRuntimeHooks();
       this.setState({
         status: 'error',
         message: error instanceof Error ? error.message : String(error),
@@ -136,12 +137,6 @@ export class CodeIndexOrchestrator implements vscode.Disposable {
       this.installBranchPoll();
     }
 
-    this.knownBranch = await this.index.getCurrentBranch();
-    this.indexing = true;
-    this.flushTimer && clearTimeout(this.flushTimer);
-    this.flushTimer = undefined;
-    this.pendingDeletes.clear();
-    this.pendingUpserts.clear();
     this.setState({
       status: 'indexing',
       message: 'Rebuilding workspace index',
@@ -149,8 +144,14 @@ export class CodeIndexOrchestrator implements vscode.Disposable {
       pendingFiles: 0,
       lastIndexedAt: this.state.lastIndexedAt,
     });
+    this.indexing = true;
+    this.flushTimer && clearTimeout(this.flushTimer);
+    this.flushTimer = undefined;
+    this.pendingDeletes.clear();
+    this.pendingUpserts.clear();
 
     try {
+      this.knownBranch = await this.index.getCurrentBranch();
       const indexedFiles = await this.index.rebuildWorkspace();
       this.setState({
         status: 'indexed',

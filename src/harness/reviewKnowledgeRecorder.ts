@@ -62,14 +62,16 @@ export class ReviewKnowledgeRecorder {
   }
 
   private async recordExactReview(index: RepoKnowledgeIndex, historyEntry: ReviewHistoryEntry): Promise<void> {
-    if (!historyEntry.reviewFingerprint) {
+    const reviewFingerprint = historyEntry.reviewFingerprint
+      ?? historyEntry.findings.find((finding) => finding.reviewFingerprint)?.reviewFingerprint;
+    if (!reviewFingerprint) {
       return;
     }
 
     const normalizedFiles = historyEntry.files.map((file) => normalizeFilePath(file.path, this.workspaceRoot!));
     await index.upsertExactReviewRun({
-      id: historyEntry.reviewFingerprint,
-      reviewFingerprint: historyEntry.reviewFingerprint,
+      id: reviewFingerprint,
+      reviewFingerprint,
       targetKind: historyEntry.reviewTargetKind ?? mapReviewTypeToTargetKind(historyEntry.reviewType),
       filePaths: JSON.stringify(normalizedFiles),
       unitFingerprints: JSON.stringify(historyEntry.unitFingerprints ?? []),
@@ -81,7 +83,7 @@ export class ReviewKnowledgeRecorder {
       await index.upsertExactReviewUnit({
         id: unitFingerprint,
         unitFingerprint,
-        reviewFingerprint: historyEntry.reviewFingerprint,
+        reviewFingerprint,
         targetKind: historyEntry.reviewTargetKind ?? mapReviewTypeToTargetKind(historyEntry.reviewType),
         filePaths: JSON.stringify(normalizedFiles),
         findingCount: historyEntry.findings.filter((finding) => finding.unitFingerprint === unitFingerprint).length,
@@ -89,7 +91,7 @@ export class ReviewKnowledgeRecorder {
     }
 
     await index.replaceExactReviewFindings(
-      historyEntry.reviewFingerprint,
+      reviewFingerprint,
       historyEntry.findings.map((finding) => this.toExactFindingRecord(historyEntry, finding))
     );
   }

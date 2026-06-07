@@ -1,317 +1,304 @@
 <p align="center">
-  <img src="https://images.pexels.com/photos/7988747/pexels-photo-7988747.jpeg?auto=compress&cs=tinysrgb&w=1600" alt="Developers reviewing code on a large screen" width="100%">
+  <img src="./resources/codebunny.png" alt="CodeBunny" width="120" />
 </p>
 
-# CodeBunny
+<h1 align="center">CodeBunny</h1>
+<h3 align="center">Runtime-agnostic AI code review for VS Code, delivered as inline comments.</h3>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.0.1-2f6fed">
-  <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.0.1-000000?colorA=000000&colorB=2f6fed">
+  <img alt="VS Code" src="https://img.shields.io/badge/VS%20Code-%5E1.85.0-000000?colorA=000000&colorB=2f6fed">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-000000?colorA=000000&colorB=22c55e">
 </p>
 
-A runtime-agnostic AI code review harness for VS Code with inline comments.
+`CodeBunny` is a VS Code extension that runs AI-assisted review over files, selections, commits, and diffs, then anchors validated findings directly in your editor.
 
-## Features
+It helps developers get fast review feedback from the CLI runtime they already use, without moving code into a hosted service or rewriting their workflow around one provider.
 
-- Review code with AI and see inline comments directly in VS Code
-- Review file, selection, staged changes, uncommitted changes, last commit, or branch
-- Accept or reject suggested fixes
-- Auto-review on stage or before commit (optional)
-- **Multi-runtime support**: Claude, Copilot, Codex, Gemini, Hermes, Pi, OpenCode
-- Read-only tool execution for safe context gathering
-- Comment validation before placement
-- Bounded review iterations with retry handling
+## Why CodeBunny?
 
-## Supported Runtimes
+- **Inline review threads**: findings appear on the relevant lines with actions for copy, dismiss, and fix application.
+- **Bring your own runtime**: Claude, Copilot, Codex, Gemini, Hermes, Pi, and OpenCode are supported.
+- **Diff-aware workflows**: review staged changes, uncommitted work, the last commit, or branch changes.
+- **Optional code indexing**: use Ollama embeddings and Qdrant to retrieve repo context and review memory.
+- **Safe context gathering**: review tooling is read-only, workspace-scoped, and delegated to authenticated local CLIs.
+- **Repeatable review sessions**: findings are tracked in the CodeBunny sidebar with files, current reviews, and previous reviews.
 
-| Runtime | Description |
-|---------|-------------|
-| `claude` | Use Anthropic's Claude Code CLI |
-| `copilot` | Use GitHub Copilot CLI |
-| `codex` | Use OpenAI Codex CLI |
-| `gemini` | Use Google Gemini CLI |
-| `hermes` | Use Hermes CLI |
-| `pi` | Use Pi CLI |
-| `opencode` | Use OpenCode CLI (default for backward compatibility) |
+## Install
+
+Install the latest release VSIX:
+
+```bash
+curl -fL https://github.com/alphaofficial/codebunny/releases/latest/download/codebunny.vsix -o /tmp/codebunny.vsix \
+  && code --install-extension /tmp/codebunny.vsix
+```
+
+Or build and install from source:
+
+```bash
+npm install
+npm run compile
+npx @vscode/vsce package
+code --install-extension codebunny-0.0.1.vsix
+```
+
+For development, open this repository in VS Code and press `F5` to launch an Extension Development Host.
 
 ## Prerequisites
 
-1. **Node.js** 18+ for building the extension
+1. **VS Code** `^1.85.0`.
+2. **Node.js** 18+ when building from source.
+3. **One authenticated review runtime**:
 
-2. **Runtime setup** (choose one):
-   - **Claude**: `npm install -g @anthropic/claude-code` and authenticate
-   - **Copilot**: `npm install -g @githubnext/copilot-cli` and authenticate
-   - **Codex**: Install OpenAI Codex CLI and authenticate
-   - **Gemini**: Install Google Gemini CLI and authenticate
-   - **Hermes/Pi**: Install respective CLI and authenticate
-   - **OpenCode**: `npm install -g opencode-ai` and `opencode auth login`
+| Runtime | Setting value | Notes |
+| --- | --- | --- |
+| Claude | `claude` | Install and authenticate Anthropic Claude Code CLI. |
+| Copilot | `copilot` | Install and authenticate GitHub Copilot CLI. |
+| Codex | `codex` | Install and authenticate OpenAI Codex CLI. |
+| Gemini | `gemini` | Install and authenticate Google Gemini CLI. |
+| Hermes | `hermes` | Install and authenticate Hermes CLI. |
+| Pi | `pi` | Install and authenticate Pi CLI. |
+| OpenCode | `opencode` | Default runtime. Install and authenticate OpenCode CLI. |
 
-## Setup
+## Quick start
 
-### 1. Build the Extension
+1. Open a workspace in VS Code.
+2. Run `CodeBunny: Select Runtime` from the Command Palette.
+3. Choose a configured CLI runtime.
+4. Open a file and run `CodeBunny: Review Current File`.
+5. Review findings inline or from the CodeBunny activity bar.
 
-```bash
-cd codebunny
-npm install
-npm run compile
-```
+To use settings instead:
 
-### 2. Install in VS Code
-
-**Option A: Install latest VSIX from GitHub Releases**
-
-```bash
-curl -L https://github.com/alphaofficial/codebunny/releases/latest/download/codebunny.vsix -o /tmp/codebunny.vsix && code --install-extension /tmp/codebunny.vsix
-```
-
-Stable VSIX URL:
-
-```text
-https://github.com/alphaofficial/codebunny/releases/latest/download/codebunny.vsix
-```
-
-**Option B: Development mode**
-
-Press F5 in VS Code to launch Extension Development Host.
-
-**Option C: Package and install locally**
-
-Run the automated install script:
-```bash
-./install.sh
-```
-
-This script will:
-1. Install npm dependencies
-2. Compile the TypeScript code
-3. Package the extension as VSIX
-4. Install the extension in VS Code
-
-After installation, reload VS Code:
-- Open Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
-- Run "Developer: Reload Window"
-
-**Manual installation (if needed):**
-
-If the automated script doesn't work, you can run these steps manually:
-
-1. Build the extension:
-   ```bash
-   npm run compile
-   ```
-
-2. Package as VSIX:
-   ```bash
-   npx @vscode/vsce package
-   ```
-   This creates `codebunny-<version>.vsix`
-
-3. Install in VS Code:
-   ```bash
-   code --install-extension codebunny-<version>.vsix
-   ```
-
-4. Reload VS Code:
-   - Open Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
-   - Run "Developer: Reload Window"
-
-### 3. Configure Runtime
-
-Open Command Palette and select a runtime:
-
-```
-CodeBunny: Select Runtime
-```
-
-## Usage
-
-1. Open a file in VS Code
-2. Open Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`)
-3. Run a review command (e.g., `CodeBunny: Review Current File`)
-4. Wait for the AI to analyze your code
-5. Review comments appear inline with Accept/Reject options
-
-### Commands
-
-| Command | Description |
-|---------|-------------|
-| `CodeBunny: Review Current File` | Review the entire active file |
-| `CodeBunny: Review Selection` | Review only the selected code |
-| `CodeBunny: Review Staged Changes` | Review git staged changes (`git diff --cached`) |
-| `CodeBunny: Review Uncommitted Changes` | Review all uncommitted changes (`git diff`) |
-| `CodeBunny: Review Last Commit` | Review the last commit (`git diff HEAD~1`) |
-| `CodeBunny: Review Branch Changes` | Review all commits on current branch vs base |
-| `CodeBunny: Review Pull Request` | Review PR with clustered passes |
-| `CodeBunny: Clear All Comments` | Remove all review comments |
-| `CodeBunny: Select Runtime` | Choose AI runtime |
-| `CodeBunny: Show Debug Logs` | Open the CodeBunny output channel |
-
-## Configuration
-
-Settings can be configured via:
-
-1. **VS Code Settings UI**: Open Settings (`Cmd+,` / `Ctrl+,`), search for "codebunny"
-2. **settings.json**: Add to your user or workspace settings
-3. **Workspace settings**: Create `.vscode/settings.json` in your project
-
-Example `settings.json`:
 ```json
 {
   "codebunny.runtime": "claude",
   "codebunny.model": "claude-sonnet-4-20250514",
-  "codebunny.autoReviewOnStage": true,
-  "codebunny.autoReviewOnCommit": false,
   "codebunny.reviewConcurrency": 5
 }
 ```
 
-### Available Settings
+## Review commands
+
+| Command | What it reviews |
+| --- | --- |
+| `CodeBunny: Review Current File` | The active file or selected Explorer file. |
+| `CodeBunny: Review Selection` | The current editor selection. |
+| `CodeBunny: Review Staged Changes` | `git diff --cached`. |
+| `CodeBunny: Review Uncommitted Changes` | Current working tree changes. |
+| `CodeBunny: Review All Changes` | All available local changes. |
+| `CodeBunny: Review Last Commit` | Changes introduced by the previous commit. |
+| `CodeBunny: Review Branch Changes` | Current branch changes compared with the base branch. |
+| `CodeBunny: Clear All Comments` | Removes inline CodeBunny review comments. |
+| `CodeBunny: Clear Active Review` | Clears the active review session in the sidebar. |
+| `CodeBunny: Open Review Panel` | Opens a saved review panel. |
+| `CodeBunny: Select Runtime` | Chooses the active AI runtime. |
+| `CodeBunny: Show Debug Logs` | Opens the CodeBunny output channel. |
+
+## Sidebar
+
+CodeBunny adds an activity bar container with five views:
+
+- **NEW REVIEW**: start common review flows.
+- **FILES**: see files in the active review.
+- **REVIEWS**: navigate findings, apply fixes, or dismiss items.
+- **PREVIOUS REVIEWS**: reopen earlier review sessions.
+- **INDEXING**: configure and control semantic code indexing.
+
+## Configuration
+
+Settings are available in the VS Code Settings UI by searching for `codebunny`, or directly in `settings.json`.
 
 | Setting | Default | Description |
-|---------|---------|-------------|
-| `codebunny.runtime` | `opencode` | Runtime: `claude`, `copilot`, `codex`, `gemini`, `hermes`, `pi`, `opencode` |
-| `codebunny.model` | (empty) | Model override. Leave empty for runtime default. |
-| `codebunny.autoReviewOnStage` | `false` | Automatically review when files are staged |
-| `codebunny.autoReviewOnCommit` | `false` | Prompt to review before commit |
-| `codebunny.codeIndexEnabled` | `true` | Enable repository indexing for related-code retrieval and review memory |
-| `codebunny.reviewConcurrency` | `5` | Maximum number of diff file review scopes to run in parallel |
-| `codebunny.executableOverride` | (empty) | Override the selected runtime executable path |
-| `codebunny.extraArgs` | (empty) | Additional arguments passed to the selected runtime |
+| --- | --- | --- |
+| `codebunny.runtime` | `opencode` | Runtime: `claude`, `copilot`, `codex`, `gemini`, `hermes`, `pi`, or `opencode`. |
+| `codebunny.model` | `""` | Optional model override. Leave empty to use the runtime default. |
+| `codebunny.autoReviewOnStage` | `false` | Automatically run a review when files are staged. |
+| `codebunny.autoReviewOnCommit` | `false` | Automatically run a review when a commit is created. |
+| `codebunny.reviewConcurrency` | `5` | Maximum number of file review scopes to run in parallel. |
+| `codebunny.executableOverride` | `""` | Override the executable path for the selected runtime. |
+| `codebunny.extraArgs` | `""` | Additional arguments passed to the runtime executable. |
+| `codebunny.codeIndexEmbedderProvider` | `ollama` | Embedder provider for code indexing. |
+| `codebunny.codeIndexOllamaBaseUrl` | `http://localhost:11434` | Ollama server used for embeddings. |
+| `codebunny.codeIndexOllamaModel` | `nomic-embed-text` | Ollama embedding model for indexing. |
+| `codebunny.codeIndexModelDimension` | `768` | Expected embedding vector dimension. |
+| `codebunny.codeIndexQdrantUrl` | `http://localhost:6333` | Qdrant URL for vector storage. |
+| `codebunny.codeIndexSearchMinScore` | `0.4` | Minimum semantic search score for retrieval. |
+| `codebunny.codeIndexSearchMaxResults` | `50` | Maximum semantic search results returned from the index. |
 
-### Runtime-Specific Settings
+The optional Qdrant API key is configured in the **INDEXING** view and stored in VS Code secret storage instead of `settings.json`.
 
-Each runtime may support additional optional settings:
+## Code indexing
+
+CodeBunny can build a semantic workspace index for richer review context and reusable review memory.
+
+### Step 1: Choose Your Setup
+
+Before enabling codebase indexing, you'll need two components:
+
+- **An Embedding Provider** - to convert code into searchable vectors
+- **A Vector Database** - to store and search those vectors
+
+### Step 2: Set Up Qdrant (Vector Database)
+
+**Option A: Cloud Setup** - FREE
+
+1. Sign up at [Qdrant Cloud](https://cloud.qdrant.io) (free tier available)
+2. Create a cluster
+3. Copy your URL and API key
+
+**Option B: Local Setup** - FREE
+
+Using Docker:
+
+```bash
+docker run -d \
+  --name qdrant \
+  --restart unless-stopped \
+  -p 6333:6333 \
+  -v qdrant_data:/qdrant/storage \
+  qdrant/qdrant
+```
+
+Using Docker Compose:
+
+```yaml
+services:
+  qdrant:
+    image: qdrant/qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+volumes:
+  qdrant_storage:
+```
+
+### Step 3: Set Up an Embedding Provider
+
+**Ollama Setup** (Default) - FREE
+
+1. Install Ollama from [ollama.ai](https://ollama.ai)
+2. Pull the embedding model:
+   ```bash
+   ollama pull nomic-embed-text
+   ```
+3. Start the Ollama server:
+   ```bash
+   ollama serve
+   ```
+4. Verify it's running at `http://localhost:11434`
+
+**Google Gemini Setup** - FREE
+
+1. Get an API key from [Google AI Studio](https://aistudio.google.com/app/apikey)
+2. In CodeBunny settings:
+   - Provider: Google Gemini
+   - API Key: Your Google AI Studio key
+
+**Other Providers Available**
+
+CodeBunny also supports OpenAI, OpenAI-compatible, Mistral, Vercel AI Gateway, Bedrock, and OpenRouter providers. You can explore these options in the configuration dropdown.
+
+### Step 4: Save
+
+1. Open the CodeBunny **INDEXING** view
+2. Confirm provider, model, dimensions, Qdrant URL, API key, score threshold, and max results
+3. Click Save and Start Indexing
+
+The status indicator will show:
+
+- **Yellow (Indexing)**: Currently processing files
+- **Green (Indexed)**: Ready for searches
+- **Red (Error)**: Check troubleshooting section
+
+### Useful commands
+
+| Command | Description |
+| --- | --- |
+| `CodeBunny: Enable Code Indexing` | Enables workspace indexing. |
+| `CodeBunny: Disable Code Indexing` | Disables workspace indexing. |
+| `CodeBunny: Rebuild Code Index` | Rebuilds the local semantic index. |
+| `CodeBunny: Stop Code Indexing` | Stops an indexing run. |
+| `CodeBunny: Clear Code Index Data` | Clears stored index data. |
+
+## Auto-review
+
+Auto-review is disabled by default.
 
 ```json
 {
-  "codebunny.runtime": "claude",
-  "codebunny.model": "claude-sonnet-4-20250514",
-  "codebunny.claudeExecutable": "/usr/local/bin/claude",
-  "codebunny.claudeExtraArgs": "--no-input"
+  "codebunny.autoReviewOnStage": true,
+  "codebunny.autoReviewOnCommit": false
 }
 ```
 
-| Setting | Description |
-|---------|-------------|
-| `codebunny.<runtime>Executable` | Override the runtime executable path |
-| `codebunny.<runtime>ExtraArgs` | Additional arguments passed to the runtime |
+- `autoReviewOnStage` watches the git index and reviews staged changes after `git add`.
+- `autoReviewOnCommit` prompts for a staged-changes review when commit activity starts.
 
-### Runtime Configuration Examples
-
-**Claude** (default):
-```json
-{
-  "codebunny.runtime": "claude",
-  "codebunny.model": "claude-sonnet-4-20250514"
-}
-```
-
-**OpenCode**:
-```json
-{
-  "codebunny.runtime": "opencode"
-}
-```
-
-**Copilot**:
-```json
-{
-  "codebunny.runtime": "copilot",
-  "codebunny.model": "gpt-4o"
-}
-```
-
-### Auto-Review Features
-
-When enabled, these settings provide automatic code review:
-
-- **autoReviewOnStage**: Watches the git index. When you stage files, it automatically triggers a review of staged changes.
-- **autoReviewOnCommit**: Watches for commit activity. When you start a commit, it prompts you to review staged changes first.
-
-Both are disabled by default. The extension only activates on startup if one of these is enabled.
-
-**Note**: After enabling auto-review settings, reload VS Code (`Developer: Reload Window`) for the changes to take effect.
+Reload VS Code after changing auto-review settings so startup watchers are registered with the new configuration.
 
 ## Architecture
 
-CodeBunny uses a runtime-agnostic architecture:
-
+```text
+CodeBunny command
+  -> ReviewOrchestrator
+  -> context packaging + cache lookup
+  -> RuntimeAdapter
+  -> selected CLI runtime
+  -> validated findings
+  -> inline comments + sidebar state
+  -> optional review memory writeback
 ```
-CodeBunny Command → ReviewOrchestrator → ReviewHarness → RuntimeAdapter → Runtime
-                                              ↓
-                                      ToolExecutor (read-only)
-                                              ↓
-                                      ContextCollector
-```
 
-- **ReviewOrchestrator**: Handles commands, progress, and cancellation
-- **ReviewHarness**: Bounded review loop with retry handling
-- **RuntimeAdapter**: Abstraction over CLI-based AI runtimes
-- **ToolExecutor**: Read-only tools for context gathering
-- **ContextCollector**: Git diff, branch detection, file reading
+Key implementation areas:
 
-CodeBunny is provider-agnostic - the same review workflow runs identically regardless of which runtime is selected. Authentication and runtime management are handled by the external runtime itself.
+- `src/extension.ts` registers commands, views, providers, and the extension lifecycle.
+- `src/reviewOrchestrator.ts` coordinates review runs, cache checks, provider calls, and comments.
+- `src/providers/runtimeAdapter.ts` spawns CLI runtimes using each runtime manifest.
+- `src/harness/contextRetriever.ts` builds related context for file and diff reviews.
+- `src/store/reviewSessionStore.ts` stores active and previous review state.
+- `src/services/code-index/` manages code indexing workers, status, and persistence.
 
-## Execution Trace
+## Security model
 
-For `Review Current File`, the exact path is:
-
-1. You trigger `codebunny.reviewFile` from the command palette, context menu, or tree view. That command is registered in [src/extension.ts](src/extension.ts) and forwards the active document to `orchestrator.reviewFile(...)`.
-2. `ReviewOrchestrator.reviewFile()` turns the document into a `ReviewRequest` with `code`, `languageId`, `filePath`, and `reviewType: 'file'` in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
-3. `reviewCode()` starts a new run, creates a session in the store, records the file as pending, and moves the session through `settingUp -> analyzing` in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts) and [src/store/reviewSessionStore.ts](src/store/reviewSessionStore.ts).
-4. Because this is a file review, it calls `reviewPreparedFile()` in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
-5. `reviewPreparedFile()` computes a deterministic fingerprint for this exact target and checks the local knowledge index for an exact cached hit before calling any model in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts) and [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
-6. If there is no exact hit, it builds a context envelope around the file via `buildFileContextEnvelope(...)`, then packages the target plus supporting context into `reviewPackage` in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts). That context system is the thing that pulls related files, code graph context, history, and indexed memory when available; the diff version of that logic starts in [src/harness/contextRetriever.ts](src/harness/contextRetriever.ts).
-7. `invokeProvider()` creates the runtime provider for the currently selected CLI, invokes it, and then filters unsupported findings in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
-8. The provider is a `CliRuntimeAdapter`, which builds the prompt, chooses stdin vs argv transport based on the runtime manifest, and spawns the CLI process in [src/providers/runtimeAdapter.ts](src/providers/runtimeAdapter.ts) and [src/providers/runtimeAdapter.ts](src/providers/runtimeAdapter.ts). For Codex specifically, it prepends a strict “review-only mode” block in [src/providers/runtimeAdapter.ts](src/providers/runtimeAdapter.ts).
-9. When comments come back, `reviewCode()` adjusts line numbers for selections if needed, converts comments into findings in the session store, and hands them to the comment controller in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
-10. `ReviewCommentController.addComments()` creates VS Code comment threads anchored to the target lines and renders the markdown/fix UI inline in [src/comments.ts](src/comments.ts).
-11. When the session completes, `ReviewKnowledgeRecorder` writes the exact review run and findings back into the local index, and if indexing is enabled it also writes semantic review memory for reuse later in [src/harness/reviewKnowledgeRecorder.ts](src/harness/reviewKnowledgeRecorder.ts).
-
-For `Review Staged Changes` / `Review Branch Changes`, the flow is the same until setup, then it diverges:
-
-1. `reviewStaged()` / `reviewBranch()` call `reviewGitChanges(...)` in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts) and [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
-2. During setup, the orchestrator asks `DiffContextCollector` for changed file names and records them in the session so the `FILES` view can populate before deeper analysis starts.
-3. During analysis, the orchestrator asks `DiffContextCollector` for the full diff, then calls `reviewPlannedDiff(...)` in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts) and [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
-4. `reviewPlannedDiff()` parses the diff into final reviewable files, creates one scope per file, fingerprints the whole diff and each unit, and can reuse exact cached results at both the whole-review and per-file-scope level in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts) and [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
-5. It builds one shared diff context envelope with the diff manifest, change map, related retrieval context, review memory, and repo summary in [src/harness/contextRetriever.ts](src/harness/contextRetriever.ts). It then generates one review-level change brief from that shared context.
-6. File scopes are reviewed in parallel up to `codebunny.reviewConcurrency`, each receiving its own target diff plus the shared context and change brief. Findings are deduped and severity-sorted by `synthesizeReviewComments(...)` in [src/harness/reviewSynthesizer.ts](src/harness/reviewSynthesizer.ts).
-7. `addDiffComments()` groups findings by file and renders inline comment threads into the real workspace files in [src/reviewOrchestrator.ts](src/reviewOrchestrator.ts).
-
-The UI state you see in the side panel is all store-driven. The `NEW REVIEW`, `FILES`, `REVIEWS`, and `PREVIOUS REVIEWS` trees read directly from `ReviewSessionStore` in [src/reviewTreeProvider.ts](src/reviewTreeProvider.ts). So the extension is effectively:
-
-`command -> orchestrator -> cache/context packaging -> runtime CLI -> findings -> store -> inline comments/tree UI -> knowledge writeback`
-
-## Security
-
-- No API key storage - authentication is delegated to the selected runtime
-- Read-only tool execution (no shell execution, no file writes during review)
-- Workspace reads constrained to active workspace
-- Git access read-only for review flows
-- No logging of prompts or sensitive data
+- Runtime authentication is delegated to your local CLI tools.
+- CodeBunny does not store provider API keys for review runtimes.
+- Qdrant API keys are stored in VS Code secret storage.
+- Review context tooling is read-only and workspace-scoped.
+- Git operations used by review flows are read-only.
+- Prompts and sensitive review payloads are not logged by default.
 
 ## Development
 
 ```bash
-# Watch mode
-npm run watch
+# Type-check and bundle production output
+npm run compile
 
-# Lint
+# Type-check only
+npm run typecheck
+
+# Lint TypeScript sources
 npm run lint
 
-# Tests
+# Run tests
 npm test
+
+# Watch tests
+npm run test:watch
 ```
 
-## Need to install local VSIX on remote endpoint
+## Remote VSIX install
 
-Sometimes you want to install a local VSIX on a remote machine, either during development or when an extension author asks you to try out a fix.
+When connected to an SSH host, container, or WSL target, install the VSIX from the remote VS Code window with **Extensions: Install from VSIX...**.
 
-Resolution: Once you have connected to an SSH host, container, or WSL, you can install the VSIX the same way you would locally. Run the Extensions: Install from VSIX... command from the Command Palette (F1). You may also want to add "extensions.autoUpdate": false to settings.json to prevent auto-updating to the latest Marketplace version. See Supporting Remote Development for more information on developing and testing extensions in a remote environment.
+You can also run:
 
-For remote run: `code --install-extension /path/to/codebunny-<version>.vsix`
+```bash
+code --install-extension /path/to/codebunny-0.0.1.vsix
+```
 
-[VSCode Docs](https://code.visualstudio.com/docs/remote/troubleshooting#_extension-tips)
+If you are testing a local build, consider disabling automatic extension updates for that remote window.
 
 ## License
 

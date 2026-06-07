@@ -1,4 +1,5 @@
 import { RepoKnowledgeIndex } from '../../harness/repoKnowledgeIndex';
+import { CodeIndexResolvedSettings } from './config-shared';
 
 type WorkerRequest =
   | { id: number; method: 'rebuildWorkspace' }
@@ -20,6 +21,7 @@ if (!workspaceRoot) {
 }
 
 RepoKnowledgeIndex.setDefaultStorageRoot(storageRoot);
+RepoKnowledgeIndex.setDefaultConnectionSettings(readConnectionSettingsFromEnv());
 
 const indexPromise = RepoKnowledgeIndex.forWorkspace(workspaceRoot);
 
@@ -69,3 +71,36 @@ process.on('message', async (message: WorkerRequest) => {
     process.exit(0);
   }
 });
+
+function readConnectionSettingsFromEnv(): CodeIndexResolvedSettings | undefined {
+  const embedderProvider = process.env.CODEBUNNY_INDEX_EMBEDDER_PROVIDER;
+  const ollamaBaseUrl = process.env.CODEBUNNY_INDEX_OLLAMA_BASE_URL;
+  const ollamaModel = process.env.CODEBUNNY_INDEX_OLLAMA_MODEL;
+  const modelDimension = Number(process.env.CODEBUNNY_INDEX_MODEL_DIMENSION);
+  const qdrantUrl = process.env.CODEBUNNY_INDEX_QDRANT_URL;
+  const searchMinScore = Number(process.env.CODEBUNNY_INDEX_SEARCH_MIN_SCORE);
+  const searchMaxResults = Number(process.env.CODEBUNNY_INDEX_SEARCH_MAX_RESULTS);
+
+  if (
+    !embedderProvider
+    || !ollamaBaseUrl
+    || !ollamaModel
+    || !Number.isFinite(modelDimension)
+    || !qdrantUrl
+    || !Number.isFinite(searchMinScore)
+    || !Number.isFinite(searchMaxResults)
+  ) {
+    return undefined;
+  }
+
+  return {
+    embedderProvider: embedderProvider as CodeIndexResolvedSettings['embedderProvider'],
+    ollamaBaseUrl,
+    ollamaModel,
+    modelDimension,
+    qdrantUrl,
+    qdrantApiKey: process.env.CODEBUNNY_INDEX_QDRANT_API_KEY || undefined,
+    searchMinScore,
+    searchMaxResults,
+  };
+}

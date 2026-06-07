@@ -7,7 +7,6 @@ const watch = process.argv.includes('--watch');
 
 const external = [
   'vscode',
-  '@lancedb/lancedb',
   'tree-sitter',
   'tree-sitter-c',
   'tree-sitter-c-sharp',
@@ -51,13 +50,11 @@ async function main() {
     fs.rmSync(path.join(__dirname, 'out'), { recursive: true, force: true });
   }
 
-  const ctx = await esbuild.context({
-    entryPoints: ['src/extension.ts'],
+  const sharedOptions = {
     bundle: true,
     format: 'cjs',
     platform: 'node',
     target: 'node20',
-    outfile: 'out/extension.js',
     define: {
       __CODEBUNNY_PROD__: JSON.stringify(production),
     },
@@ -68,17 +65,30 @@ async function main() {
     logLevel: 'info',
     legalComments: 'none',
     plugins: [esbuildProblemMatcherPlugin],
-  });
+  };
+
+  const contexts = await Promise.all([
+    esbuild.context({
+      ...sharedOptions,
+      entryPoints: ['src/extension.ts'],
+      outfile: 'out/extension.js',
+    }),
+    esbuild.context({
+      ...sharedOptions,
+      entryPoints: ['src/services/code-index/workerProcess.ts'],
+      outfile: 'out/workerProcess.js',
+    }),
+  ]);
 
   if (watch) {
-    await ctx.watch();
+    await Promise.all(contexts.map((ctx) => ctx.watch()));
     return;
   }
 
   try {
-    await ctx.rebuild();
+    await Promise.all(contexts.map((ctx) => ctx.rebuild()));
   } finally {
-    await ctx.dispose();
+    await Promise.all(contexts.map((ctx) => ctx.dispose()));
   }
 }
 
