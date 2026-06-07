@@ -37,6 +37,7 @@ export interface RuntimeAdapter {
   manifest: RuntimeManifest;
   invoke(request: ReviewRequest): Promise<NormalizedReviewResult>;
   generateChangeBrief(prompt: string): Promise<string>;
+  runAgentTask(prompt: string): Promise<string>;
   cancel(): void;
   isAvailable(): Promise<boolean>;
 }

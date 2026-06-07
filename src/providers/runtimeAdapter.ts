@@ -57,6 +57,15 @@ export class CliRuntimeAdapter implements RuntimeAdapter {
       : this.invokeRawWithArgv(executable, effectivePrompt);
   }
 
+  async runAgentTask(prompt: string, token?: vscode.CancellationToken): Promise<string> {
+    this.cancellationToken = token;
+    const executable = this.resolveExecutable();
+
+    return this.manifest.promptTransport === 'stdin'
+      ? this.invokeRawWithStdin(executable, prompt)
+      : this.invokeRawWithArgv(executable, prompt);
+  }
+
   cancel(): void {
     if (this.currentProcess) {
       this.currentProcess.kill();

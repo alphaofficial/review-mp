@@ -6,9 +6,12 @@
 <h3 align="center">Runtime-agnostic AI code review for VS Code, delivered as inline comments.</h3>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.0.1-000000?colorA=000000&colorB=2f6fed">
-  <img alt="VS Code" src="https://img.shields.io/badge/VS%20Code-%5E1.85.0-000000?colorA=000000&colorB=2f6fed">
-  <img alt="License" src="https://img.shields.io/badge/license-MIT-000000?colorA=000000&colorB=22c55e">
+  <a href="https://github.com/alphaofficial/codebunny/releases/latest">
+    <img src="https://img.shields.io/github/v/release/alphaofficial/codebunny?style=flat&colorA=000000&colorB=000000" alt="Latest release" />
+  </a>
+  <a href="https://github.com/alphaofficial/codebunny/actions/workflows/ci.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/alphaofficial/codebunny/ci.yml?style=flat&colorA=000000&colorB=000000" alt="Build workflow" />
+  </a>
 </p>
 
 `CodeBunny` is a VS Code extension that runs AI-assisted review over files, selections, commits, and diffs, then anchors validated findings directly in your editor.
@@ -67,16 +70,6 @@ For development, open this repository in VS Code and press `F5` to launch an Ext
 3. Choose a configured CLI runtime.
 4. Open a file and run `CodeBunny: Review Current File`.
 5. Review findings inline or from the CodeBunny activity bar.
-
-To use settings instead:
-
-```json
-{
-  "codebunny.runtime": "claude",
-  "codebunny.model": "claude-sonnet-4-20250514",
-  "codebunny.reviewConcurrency": 5
-}
-```
 
 ## Review commands
 

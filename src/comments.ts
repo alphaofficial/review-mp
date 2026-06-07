@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import { ModelProvider } from './providers/modelProvider';
-import { FixApplicator, createFixApplicator } from './harness/fixApplicator';
 import { ReviewFinding } from './types/review';
 import { ReviewSessionStore } from './store/reviewSessionStore';
 import { logDebug } from './settings';
@@ -28,12 +27,10 @@ export class ReviewCommentController implements vscode.Disposable {
   private threads: Map<string, vscode.CommentThread[]> = new Map();
   private commentDataMap: WeakMap<vscode.Comment, CommentData> = new WeakMap();
   private findingIdToComment: Map<string, vscode.Comment> = new Map();
-  private fixApplicator: FixApplicator;
   private store: ReviewSessionStore | null = null;
   private readonly authorIconPath: vscode.Uri;
 
-  constructor(context: vscode.ExtensionContext, provider?: ModelProvider, fixApplicator?: FixApplicator, store?: ReviewSessionStore) {
-    this.fixApplicator = fixApplicator || createFixApplicator();
+  constructor(context: vscode.ExtensionContext, _provider?: ModelProvider, _fixApplicator?: unknown, store?: ReviewSessionStore) {
     this.store = store || null;
     this.authorIconPath = vscode.Uri.joinPath(context.extensionUri, 'resources', 'codebunny.png');
     this.controller = vscode.comments.createCommentController(
@@ -308,43 +305,20 @@ export class ReviewCommentController implements vscode.Disposable {
     }
 
     try {
-      logDebug('Applying fix from review comment', {
+      logDebug('Dispatching apply fix from review comment', {
         findingId: data.findingId,
         uri: data.uri.toString(),
         line: data.line,
         fixChars: data.fix.length,
       });
-      const result = await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: 'CodeBunny: Applying fix...',
-          cancellable: false,
-        },
-        async () => {
-          return await this.fixApplicator.applyFix(data.uri.fsPath, data.line, data.fix!);
-        }
-      );
-
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to apply fix');
-      }
-
-      if (this.store) {
-        this.store.updateFindingStatus(data.findingId, 'apply');
-      }
-
-      data.thread.dispose();
-      this.removeThreadFromMap(data.uri, data.thread);
-      this.findingIdToComment.delete(data.findingId);
-
-      vscode.window.showInformationMessage('Fix applied successfully');
-      logDebug('Applied fix from review comment', {
+      await vscode.commands.executeCommand('codebunny.applyFindingFix', data.findingId);
+      logDebug('Dispatched apply fix from review comment', {
         findingId: data.findingId,
         uri: data.uri.toString(),
         line: data.line,
       });
     } catch (error) {
-      logDebug('Applying fix from review comment failed', {
+      logDebug('Dispatching apply fix from review comment failed', {
         findingId: data.findingId,
         uri: data.uri.toString(),
         line: data.line,
