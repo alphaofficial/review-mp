@@ -8,7 +8,7 @@ import { CliRuntimeAdapter } from './providers/runtimeAdapter';
 import { globalRuntimeRegistry } from './providers/builtInRuntimes';
 import { RuntimeId, RuntimeSettings } from './providers/runtimeRegistry';
 import { ReviewRequest } from './types/review';
-import { getSettings, logDebug, registerSettingsCommands, showDebugLogs } from './settings';
+import { getSettings, initializeCodeIndexSettingsState, logDebug, registerSettingsCommands, showDebugLogs } from './settings';
 import { ReviewTreeProvider, ReviewTreeViewId } from './reviewTreeProvider';
 import { getReviewSessionStore } from './store/reviewSessionStore';
 import { FixApplicator, createFixApplicator } from './harness/fixApplicator';
@@ -16,8 +16,9 @@ import { ReviewDecorationController } from './reviewDecorationController';
 import { ReviewKnowledgeRecorder } from './harness/reviewKnowledgeRecorder';
 import { CodeIndexManager } from './services/code-index/manager';
 import { CodeIndexController } from './services/code-index/controller';
-import { CodeIndexTreeProvider } from './codeIndexTreeProvider';
+import { CodeIndexPanel } from './codeIndexPanel';
 import { RepoKnowledgeIndex } from './harness/repoKnowledgeIndex';
+import { CodeIndexSecretStore } from './services/code-index/config';
 
 class RuntimeProviderAdapter implements ModelProvider {
   readonly name: string;
@@ -62,10 +63,11 @@ let decorationController: ReviewDecorationController;
 let knowledgeRecorder: ReviewKnowledgeRecorder | undefined;
 let codeIndexManager: CodeIndexManager | undefined;
 let codeIndexController: CodeIndexController | undefined;
-let codeIndexTreeProvider: CodeIndexTreeProvider | undefined;
+let codeIndexPanel: CodeIndexPanel | undefined;
 const store = getReviewSessionStore();
 
 export function activate(context: vscode.ExtensionContext) {
+  initializeCodeIndexSettingsState(context.globalState, context.workspaceState);
   logDebug('CodeBunny extension activated', {
     extensionPath: context.extensionPath,
     subscriptionCount: context.subscriptions.length,
@@ -132,13 +134,17 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push({ dispose: () => knowledgeRecorder?.dispose() });
   codeIndexManager ??= CodeIndexManager.getInstance();
   codeIndexController?.dispose();
-  codeIndexController = new CodeIndexController(codeIndexManager, workspaceRoot);
-  codeIndexTreeProvider?.dispose();
-  codeIndexTreeProvider = new CodeIndexTreeProvider(codeIndexController);
+  codeIndexController = new CodeIndexController(
+    codeIndexManager,
+    workspaceRoot,
+    new CodeIndexSecretStore(context.secrets)
+  );
+  codeIndexPanel?.dispose();
+  codeIndexPanel = new CodeIndexPanel(codeIndexController, context.extensionUri);
   context.subscriptions.push(
-    vscode.window.registerTreeDataProvider('codebunny.indexing', codeIndexTreeProvider),
-    codeIndexTreeProvider,
+    vscode.window.registerWebviewViewProvider('codebunny.indexing', codeIndexPanel),
     codeIndexController,
+    codeIndexPanel,
     { dispose: () => codeIndexManager?.dispose() }
   );
   void codeIndexController.initialize();
@@ -622,5 +628,5 @@ export function deactivate() {
     store.dispose();
   }
   codeIndexController?.dispose();
-  codeIndexTreeProvider?.dispose();
+  codeIndexPanel?.dispose();
 }

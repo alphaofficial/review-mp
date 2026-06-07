@@ -1,6 +1,7 @@
 import { ChildProcess, fork } from 'node:child_process';
 import path from 'node:path';
 import { CodeIndexBackend } from './backend';
+import { CodeIndexResolvedSettings } from './config-shared';
 
 type WorkerRequest =
   | { id: number; method: 'rebuildWorkspace' }
@@ -31,7 +32,11 @@ export class CodeIndexWorkerClient implements CodeIndexBackend {
   }>();
   private closed = false;
 
-  constructor(workspaceRoot: string, storageRoot: string | undefined) {
+  constructor(
+    workspaceRoot: string,
+    storageRoot: string | undefined,
+    resolvedSettings?: CodeIndexResolvedSettings
+  ) {
     const workerPath = path.join(__dirname, 'workerProcess.js');
     this.child = fork(workerPath, [], {
       stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
@@ -39,6 +44,14 @@ export class CodeIndexWorkerClient implements CodeIndexBackend {
         ...process.env,
         CODEBUNNY_INDEX_WORKSPACE_ROOT: workspaceRoot,
         CODEBUNNY_INDEX_STORAGE_ROOT: storageRoot ?? '',
+        CODEBUNNY_INDEX_EMBEDDER_PROVIDER: resolvedSettings?.embedderProvider ?? '',
+        CODEBUNNY_INDEX_OLLAMA_BASE_URL: resolvedSettings?.ollamaBaseUrl ?? '',
+        CODEBUNNY_INDEX_OLLAMA_MODEL: resolvedSettings?.ollamaModel ?? '',
+        CODEBUNNY_INDEX_MODEL_DIMENSION: String(resolvedSettings?.modelDimension ?? ''),
+        CODEBUNNY_INDEX_QDRANT_URL: resolvedSettings?.qdrantUrl ?? '',
+        CODEBUNNY_INDEX_QDRANT_API_KEY: resolvedSettings?.qdrantApiKey ?? '',
+        CODEBUNNY_INDEX_SEARCH_MIN_SCORE: String(resolvedSettings?.searchMinScore ?? ''),
+        CODEBUNNY_INDEX_SEARCH_MAX_RESULTS: String(resolvedSettings?.searchMaxResults ?? ''),
       },
     });
 

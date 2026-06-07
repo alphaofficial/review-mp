@@ -1,48 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('vscode', () => {
-  function MockEventEmitter<T>() {
-    const listeners: Array<(data: T) => void> = [];
-    return {
-      event(listener: (data: T) => void) {
-        listeners.push(listener);
-        return { dispose: vi.fn() };
-      },
-      fire(data: T) {
-        listeners.forEach((listener) => listener(data));
-      },
-      dispose: vi.fn(),
-    };
-  }
+vi.mock('vscode', () => ({
+  Uri: {
+    joinPath: vi.fn((base: { fsPath: string }, ...parts: string[]) => ({ fsPath: [base.fsPath, ...parts].join('/') })),
+  },
+}));
 
-  return {
-    ThemeIcon: class MockThemeIcon {
-      constructor(public id: string) {}
-    },
-    TreeItemCollapsibleState: { None: 0 },
-    TreeItem: class MockTreeItem {
-      label: string;
-      collapsibleState: number;
-      description?: string;
-      tooltip?: string;
-      iconPath: unknown;
-      command: unknown;
-      constructor(label: string, collapsibleState: number) {
-        this.label = label;
-        this.collapsibleState = collapsibleState;
-      }
-    },
-    EventEmitter: MockEventEmitter,
-  };
-});
-
-import { CodeIndexTreeProvider } from '../../src/codeIndexTreeProvider';
+import { CodeIndexPanel } from '../../src/codeIndexPanel';
 import { CodeIndexViewState } from '../../src/services/code-index/controller';
 
-describe('CodeIndexTreeProvider', () => {
+describe('CodeIndexPanel', () => {
   let state: CodeIndexViewState;
-  let listener: ((state: CodeIndexViewState) => void) | undefined;
-  let provider: CodeIndexTreeProvider;
+  let listener: (() => void) | undefined;
 
   beforeEach(() => {
     state = {
@@ -51,56 +20,101 @@ describe('CodeIndexTreeProvider', () => {
       indexedFiles: 12,
       pendingFiles: 0,
       enabled: true,
+      autoEnableDefault: true,
+      workspaceEnabled: true,
       workspaceRoot: '/repo',
-      storagePath: '/repo/.codebunny/lancedb',
+      storagePath: '/repo/.codebunny/index',
+      vectorStoreUrl: 'http://localhost:6333',
+      setup: {
+        embedderProvider: 'ollama',
+        ollamaBaseUrl: 'http://localhost:11434',
+        ollamaModel: 'nomic-embed-text',
+        modelDimension: 768,
+        qdrantUrl: 'http://localhost:6333',
+        qdrantApiKey: '',
+        qdrantApiKeyConfigured: false,
+        searchMinScore: 0.4,
+        searchMaxResults: 50,
+      },
       lastIndexedAt: 1,
     };
+  });
 
-    provider = new CodeIndexTreeProvider({
-      getState: () => state,
-      onDidChangeState: (cb: (next: CodeIndexViewState) => void) => {
-        listener = cb;
-        return { dispose: vi.fn() };
+  it('renders the indexing setup in a webview view', () => {
+    const panel = new CodeIndexPanel(
+      {
+        getState: () => state,
+        onDidChangeState: (cb: () => void) => {
+          listener = cb;
+          return { dispose: vi.fn() };
+        },
+      } as any,
+      { fsPath: '/extension' } as any
+    );
+
+    const postMessage = vi.fn();
+    const onDidReceiveMessage = vi.fn();
+    const onDidDispose = vi.fn();
+
+    panel.resolveWebviewView({
+      webview: {
+        options: {},
+        html: '',
+        postMessage,
+        onDidReceiveMessage,
+        asWebviewUri: vi.fn((uri: { fsPath: string }) => uri.fsPath),
       },
+      onDidDispose,
     } as any);
+
+    expect(onDidReceiveMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'indexState',
+    }));
+    expect((panel as any).view?.webview.html ?? '').toContain('Advanced Configuration');
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'indexState',
+    }));
   });
 
-  it('shows status, counts, storage, and action rows', () => {
-    const items = provider.getChildren() as any[];
+  it('pushes state updates after the controller changes', () => {
+    const panel = new CodeIndexPanel(
+      {
+        getState: () => state,
+        onDidChangeState: (cb: () => void) => {
+          listener = cb;
+          return { dispose: vi.fn() };
+        },
+      } as any,
+      { fsPath: '/extension' } as any
+    );
 
-    expect(items.map((item) => item.label)).toEqual([
-      'Status',
-      'Indexed Files',
-      'Pending Updates',
-      'Index Storage',
-      'Rebuild Index',
-      'Stop Indexing',
-      'Disable Indexing',
-      'Clear Index Data',
-    ]);
-  });
+    const postMessage = vi.fn();
+    panel.resolveWebviewView({
+      webview: {
+        options: {},
+        html: '',
+        postMessage,
+        onDidReceiveMessage: vi.fn(),
+        asWebviewUri: vi.fn((uri: { fsPath: string }) => uri.fsPath),
+      },
+      onDidDispose: vi.fn(),
+    } as any);
 
-  it('switches actions when indexing is disabled', () => {
-    state.enabled = false;
-    state.status = 'standby';
-    state.message = 'Indexing disabled';
-
-    const items = provider.getChildren() as any[];
-    expect(items.map((item) => item.label)).toContain('Enable Indexing');
-    expect(items.map((item) => item.label)).not.toContain('Disable Indexing');
-  });
-
-  it('refreshes when the controller state changes', () => {
-    const spy = vi.fn();
-    provider.onDidChangeTreeData(spy);
-
-    listener?.({
+    state = {
       ...state,
       pendingFiles: 3,
       status: 'indexing',
       message: 'Applying incremental index updates',
-    });
+    };
+    listener?.();
 
-    expect(spy).toHaveBeenCalled();
+    expect(postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: 'indexState',
+      value: expect.objectContaining({
+        pendingFiles: 3,
+        status: 'indexing',
+      }),
+    }));
   });
 });

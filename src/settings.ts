@@ -14,21 +14,53 @@ export interface Settings {
 }
 
 let outputChannel: vscode.OutputChannel | undefined;
+let codeIndexFeatureEnabled = false;
+let codeIndexAutoEnableDefault = true;
+let globalStateStore: vscode.Memento | undefined;
+let workspaceStateStore: vscode.Memento | undefined;
+
+const CODE_INDEX_FEATURE_ENABLED_KEY = 'codebunny.codeIndex.featureEnabled';
+const CODE_INDEX_AUTO_ENABLE_DEFAULT_KEY = 'codebunny.codeIndex.autoEnableDefault';
+const CODE_INDEX_WORKSPACE_ENABLED_KEY = 'codebunny.codeIndex.workspaceEnabled';
 
 export function getSettings(): Settings {
   const config = typeof vscode.workspace?.getConfiguration === 'function'
     ? vscode.workspace.getConfiguration('codebunny')
     : undefined;
+  const workspaceCodeIndexEnabled = getWorkspaceCodeIndexEnabled();
   return {
     runtime: config?.get<RuntimeId>('runtime', DEFAULT_RUNTIME_ID) ?? DEFAULT_RUNTIME_ID,
     model: config?.get<string>('model', '') ?? '',
     autoReviewOnStage: config?.get<boolean>('autoReviewOnStage', false) ?? false,
     autoReviewOnCommit: config?.get<boolean>('autoReviewOnCommit', false) ?? false,
-    codeIndexEnabled: config?.get<boolean>('codeIndexEnabled', true) ?? true,
+    codeIndexEnabled: codeIndexFeatureEnabled && workspaceCodeIndexEnabled,
     reviewConcurrency: clampInteger(config?.get<number>('reviewConcurrency', 5) ?? 5, 1, 20),
     executableOverride: config?.get<string>('executableOverride', '') ?? '',
     extraArgs: config?.get<string>('extraArgs', '') ?? '',
   };
+}
+
+export function initializeCodeIndexSettingsState(globalState: vscode.Memento, workspaceState: vscode.Memento): void {
+  globalStateStore = globalState;
+  workspaceStateStore = workspaceState;
+  codeIndexFeatureEnabled = globalState.get<boolean>(CODE_INDEX_FEATURE_ENABLED_KEY, false);
+  codeIndexAutoEnableDefault = globalState.get<boolean>(CODE_INDEX_AUTO_ENABLE_DEFAULT_KEY, true);
+}
+
+export function getCodeIndexFeatureEnabled(): boolean {
+  return codeIndexFeatureEnabled;
+}
+
+export function getCodeIndexAutoEnableDefault(): boolean {
+  return codeIndexAutoEnableDefault;
+}
+
+export function getWorkspaceCodeIndexEnabled(): boolean {
+  return getWorkspaceCodeIndexEnabledOverride() ?? codeIndexAutoEnableDefault;
+}
+
+export function getWorkspaceCodeIndexEnabledOverride(): boolean | undefined {
+  return workspaceStateStore?.get<boolean | undefined>(CODE_INDEX_WORKSPACE_ENABLED_KEY, undefined);
 }
 
 function clampInteger(value: number, min: number, max: number): number {
@@ -45,8 +77,22 @@ export async function setRuntime(runtime: RuntimeId): Promise<void> {
 }
 
 export async function setCodeIndexEnabled(enabled: boolean): Promise<void> {
-  const config = vscode.workspace.getConfiguration('codebunny');
-  await config.update('codeIndexEnabled', enabled, vscode.ConfigurationTarget.Workspace);
+  codeIndexFeatureEnabled = enabled;
+  await globalStateStore?.update(CODE_INDEX_FEATURE_ENABLED_KEY, enabled);
+}
+
+export async function setCodeIndexAutoEnableDefault(enabled: boolean): Promise<void> {
+  codeIndexAutoEnableDefault = enabled;
+  await globalStateStore?.update(CODE_INDEX_AUTO_ENABLE_DEFAULT_KEY, enabled);
+}
+
+export async function setWorkspaceCodeIndexEnabled(enabled: boolean): Promise<void> {
+  if (enabled === codeIndexAutoEnableDefault) {
+    await workspaceStateStore?.update(CODE_INDEX_WORKSPACE_ENABLED_KEY, undefined);
+    return;
+  }
+
+  await workspaceStateStore?.update(CODE_INDEX_WORKSPACE_ENABLED_KEY, enabled);
 }
 
 function getOutputChannel(): vscode.OutputChannel {

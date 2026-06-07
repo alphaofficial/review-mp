@@ -1,10 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({
-  getSettings: vi.fn(),
-  setCodeIndexEnabled: vi.fn(),
-}));
-
 vi.mock('vscode', () => ({
   EventEmitter: class<T> {
     private listeners: Array<(value: T) => void> = [];
@@ -21,77 +16,103 @@ vi.mock('vscode', () => ({
   },
 }));
 
-vi.mock('../../src/settings', () => ({
-  getSettings: mocks.getSettings,
-  setCodeIndexEnabled: mocks.setCodeIndexEnabled,
-  logDebug: vi.fn(),
-}));
-
 import { CodeIndexController } from '../../src/services/code-index/controller';
 
 describe('CodeIndexController', () => {
+  const state = {
+    status: 'standby',
+    message: 'Standby',
+    indexedFiles: 0,
+    pendingFiles: 0,
+    featureEnabled: false,
+    configured: false,
+    enabled: false,
+    autoEnableDefault: true,
+    workspaceEnabled: true,
+    workspaceRoot: '/repo',
+    storagePath: '/repo/.codebunny/index',
+    vectorStoreUrl: 'http://localhost:6333',
+    setup: {
+      embedderProvider: 'ollama',
+      ollamaBaseUrl: 'http://localhost:11434',
+      ollamaModel: 'nomic-embed-text',
+      modelDimension: 768,
+      qdrantUrl: 'http://localhost:6333',
+      qdrantApiKey: '',
+      qdrantApiKeyConfigured: false,
+      searchMinScore: 0.4,
+      searchMaxResults: 50,
+    },
+  } as const;
+
+  let manager: any;
+
   beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.getSettings.mockReturnValue({ codeIndexEnabled: false });
-  });
-
-  it('stays disabled without activating a workspace when indexing is off', async () => {
-    const manager = {
-      activateWorkspace: vi.fn(),
-    } as any;
-
-    const controller = new CodeIndexController(manager, '/repo');
-    await controller.initialize();
-
-    expect(manager.activateWorkspace).not.toHaveBeenCalled();
-    expect(controller.getState().enabled).toBe(false);
-    expect(controller.getState().message).toBe('Indexing disabled');
-  });
-
-  it('starts indexing when enabled from the controller', async () => {
-    const start = vi.fn().mockResolvedValue(undefined);
-    const orchestrator = {
-      start,
-      getState: vi.fn().mockReturnValue({
-        status: 'standby',
-        message: 'Standby',
-        indexedFiles: 0,
-        pendingFiles: 0,
-      }),
+    manager = {
+      bindWorkspace: vi.fn(),
       onDidChangeState: vi.fn(() => ({ dispose: vi.fn() })),
+      getState: vi.fn(() => state),
+      initialize: vi.fn().mockResolvedValue(undefined),
+      getResolvedSetup: vi.fn().mockResolvedValue({
+        embedderProvider: 'ollama',
+        ollamaBaseUrl: 'http://localhost:11434',
+        ollamaModel: 'nomic-embed-text',
+        modelDimension: 768,
+        qdrantUrl: 'http://localhost:6333',
+        searchMinScore: 0.4,
+        searchMaxResults: 50,
+      }),
+      setAutoEnableDefault: vi.fn().mockResolvedValue(undefined),
+      setWorkspaceEnabled: vi.fn().mockResolvedValue(undefined),
+      saveSetup: vi.fn().mockResolvedValue(undefined),
+      setFeatureEnabled: vi.fn().mockResolvedValue(undefined),
+      startIndexing: vi.fn().mockResolvedValue(undefined),
+      stopIndexing: vi.fn(),
+      rebuildIndex: vi.fn().mockResolvedValue(undefined),
+      clearIndexData: vi.fn().mockResolvedValue(undefined),
     };
-    const manager = {
-      activateWorkspace: vi.fn().mockResolvedValue(orchestrator),
-    } as any;
+  });
 
-    const controller = new CodeIndexController(manager, '/repo');
+  it('binds the workspace and returns manager state', () => {
+    const controller = new CodeIndexController(manager, '/repo', {} as any);
+
+    expect(manager.bindWorkspace).toHaveBeenCalledWith('/repo', {} as any);
+    expect(controller.getState()).toEqual(state);
+  });
+
+  it('delegates start and stop actions to the manager', async () => {
+    const controller = new CodeIndexController(manager, '/repo', {} as any);
+
+    await controller.start();
+    await controller.stop();
+
+    expect(manager.startIndexing).toHaveBeenCalledTimes(1);
+    expect(manager.stopIndexing).toHaveBeenCalledTimes(1);
+  });
+
+  it('delegates save and toggle actions to the manager', async () => {
+    const controller = new CodeIndexController(manager, '/repo', {} as any);
+    const payload = {
+      featureEnabled: true,
+      embedderProvider: 'ollama',
+      ollamaBaseUrl: 'http://localhost:11434',
+      ollamaModel: 'nomic-embed-text',
+      modelDimension: 768,
+      qdrantUrl: 'http://localhost:6333',
+      qdrantApiKey: '',
+      preserveQdrantApiKey: true,
+      searchMinScore: 0.4,
+      searchMaxResults: 50,
+    } as const;
+
+    await controller.saveSetup(payload);
+    await controller.setAutoEnableDefault(false);
+    await controller.setWorkspaceEnabled(true);
     await controller.setEnabled(true);
 
-    expect(mocks.setCodeIndexEnabled).toHaveBeenCalledWith(true);
-    expect(manager.activateWorkspace).toHaveBeenCalledWith('/repo');
-    expect(start).toHaveBeenCalledTimes(1);
-  });
-
-  it('can clear index data through the orchestrator', async () => {
-    const clearIndexData = vi.fn().mockResolvedValue(undefined);
-    const orchestrator = {
-      clearIndexData,
-      getState: vi.fn().mockReturnValue({
-        status: 'standby',
-        message: 'Index data cleared',
-        indexedFiles: 0,
-        pendingFiles: 0,
-      }),
-      onDidChangeState: vi.fn(() => ({ dispose: vi.fn() })),
-    };
-    const manager = {
-      activateWorkspace: vi.fn().mockResolvedValue(orchestrator),
-    } as any;
-
-    const controller = new CodeIndexController(manager, '/repo');
-    await controller.clear();
-
-    expect(clearIndexData).toHaveBeenCalledTimes(1);
-    expect(controller.getState().message).toBe('Index data cleared');
+    expect(manager.saveSetup).toHaveBeenCalledWith(payload);
+    expect(manager.setAutoEnableDefault).toHaveBeenCalledWith(false);
+    expect(manager.setWorkspaceEnabled).toHaveBeenCalledWith(true);
+    expect(manager.setFeatureEnabled).toHaveBeenCalledWith(true);
   });
 });

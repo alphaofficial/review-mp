@@ -6,6 +6,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('vscode', () => ({
+  workspace: {
+    getConfiguration: vi.fn(() => ({
+      get: vi.fn((_: string, defaultValue: unknown) => defaultValue),
+      update: vi.fn(),
+    })),
+  },
+  ConfigurationTarget: {
+    Workspace: 2,
+  },
+}));
+
 vi.mock('../../src/settings', () => ({
   getSettings: () => ({ codeIndexEnabled: true }),
   logDebug: vi.fn(),
@@ -23,8 +35,41 @@ import {
 import { RepoKnowledgeIndex } from '../../src/harness/repoKnowledgeIndex';
 
 const tempRoots: string[] = [];
+const qdrantCollections = new Map<string, { dimension: number; points: Map<string, StoredPoint> }>();
+
+type StoredPoint = {
+  id: string;
+  payload: Record<string, unknown>;
+  vector: number[];
+};
+
+beforeEach(() => {
+  qdrantCollections.clear();
+  RepoKnowledgeIndex.setDefaultConnectionSettings({
+    embedderProvider: 'ollama',
+    ollamaBaseUrl: 'http://localhost:11434',
+    ollamaModel: 'nomic-embed-text',
+    modelDimension: 8,
+    qdrantUrl: 'http://localhost:6333',
+    searchMinScore: 0.4,
+    searchMaxResults: 50,
+  });
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    if (url.startsWith('http://localhost:11434')) {
+      return handleOllamaRequest(url, init);
+    }
+
+    if (url.startsWith('http://localhost:6333')) {
+      return handleQdrantRequest(url, init);
+    }
+
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  }));
+});
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   for (const tempRoot of tempRoots.splice(0)) {
     rmSync(tempRoot, { recursive: true, force: true });
   }
@@ -219,3 +264,136 @@ diff --git a/retrieval/helper.ts b/retrieval/helper.ts
     expect(envelope.text).toContain('Repository');
   });
 });
+
+function handleOllamaRequest(url: string, init?: RequestInit): Response {
+  expect(url).toContain('/api/embed');
+  const body = JSON.parse(String(init?.body ?? '{}'));
+  const input = typeof body.input === 'string' ? body.input : '';
+  const vector = buildDeterministicVector(input, 8);
+  return jsonResponse({
+    embeddings: [vector],
+  });
+}
+
+function handleQdrantRequest(url: string, init?: RequestInit): Response {
+  const parsed = new URL(url);
+  const segments = parsed.pathname.split('/').filter(Boolean);
+  const collectionName = segments[1];
+  const method = init?.method ?? 'GET';
+  const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+
+  if (!collectionName) {
+    throw new Error(`Unexpected Qdrant path: ${parsed.pathname}`);
+  }
+
+  if (segments.length === 2 && method === 'GET') {
+    const collection = qdrantCollections.get(collectionName);
+    if (!collection) {
+      return new Response('Not found', { status: 404 });
+    }
+    return jsonResponse({
+      result: {
+        config: {
+          params: {
+            vectors: {
+              size: collection.dimension,
+            },
+          },
+        },
+      },
+    });
+  }
+
+  if (segments.length === 2 && method === 'PUT') {
+    qdrantCollections.set(collectionName, {
+      dimension: body.vectors.size,
+      points: new Map(),
+    });
+    return jsonResponse({ result: true });
+  }
+
+  if (segments.length === 2 && method === 'DELETE') {
+    qdrantCollections.delete(collectionName);
+    return jsonResponse({ result: true });
+  }
+
+  const collection = qdrantCollections.get(collectionName);
+  if (!collection) {
+    return new Response('Not found', { status: 404 });
+  }
+
+  if (segments[2] === 'points' && method === 'PUT') {
+    for (const point of body.points as StoredPoint[]) {
+      collection.points.set(String(point.id), point);
+    }
+    return jsonResponse({ result: true });
+  }
+
+  if (segments[2] === 'points' && segments[3] === 'delete' && method === 'POST') {
+    for (const [pointId, point] of collection.points) {
+      if (matchesFilter(point.payload, body.filter)) {
+        collection.points.delete(pointId);
+      }
+    }
+    return jsonResponse({ result: true });
+  }
+
+  if (segments[2] === 'points' && segments[3] === 'query' && method === 'POST') {
+    const matches = Array.from(collection.points.values())
+      .filter((point) => matchesFilter(point.payload, body.filter))
+      .map((point) => ({
+        id: point.id,
+        payload: point.payload,
+        score: cosineSimilarity(point.vector, body.query as number[]),
+      }))
+      .sort((left, right) => right.score - left.score)
+      .slice(0, body.limit ?? 10);
+    return jsonResponse({
+      result: {
+        points: matches,
+      },
+    });
+  }
+
+  throw new Error(`Unhandled Qdrant request: ${method} ${parsed.pathname}`);
+}
+
+function matchesFilter(payload: Record<string, unknown>, filter: any): boolean {
+  if (!filter?.must) {
+    return true;
+  }
+
+  return filter.must.every((condition: any) => payload[condition.key] === condition.match?.value);
+}
+
+function cosineSimilarity(left: number[], right: number[]): number {
+  let dot = 0;
+  let leftMagnitude = 0;
+  let rightMagnitude = 0;
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const leftValue = left[index] ?? 0;
+    const rightValue = right[index] ?? 0;
+    dot += leftValue * rightValue;
+    leftMagnitude += leftValue * leftValue;
+    rightMagnitude += rightValue * rightValue;
+  }
+
+  return dot / (Math.sqrt(leftMagnitude) * Math.sqrt(rightMagnitude) || 1);
+}
+
+function buildDeterministicVector(text: string, dimension: number): number[] {
+  const vector = new Array<number>(dimension).fill(0);
+  for (let index = 0; index < text.length; index += 1) {
+    vector[index % dimension] += (text.charCodeAt(index) % 17) / 17;
+  }
+  return vector;
+}
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+}
