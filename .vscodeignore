@@ -10,6 +10,8 @@ docs/**
 out/**
 !out/extension.js
 !out/extension.js.map
+!out/workerProcess.js
+!out/workerProcess.js.map
 .gitignore
 tsconfig.json
 vitest.config.ts
